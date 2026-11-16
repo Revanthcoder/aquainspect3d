@@ -11,6 +11,7 @@ import numpy as np
 
 
 SAMPLE_DEFECTS = ("Crack", "Concrete erosion", "Water leakage", "Surface damage")
+ENHANCEMENT_PROFILES = ("visibility", "low-light", "color-correct")
 
 
 def generate_sample_image(defect_type: str, seed: int = 7) -> np.ndarray:
@@ -50,15 +51,40 @@ def generate_sample_image(defect_type: str, seed: int = 7) -> np.ndarray:
     return image
 
 
-def enhance_image(image: np.ndarray) -> np.ndarray:
-    """Apply CLAHE in LAB space and light denoising for low-contrast imagery."""
+def enhance_image(image: np.ndarray, profile: str = "visibility") -> np.ndarray:
+    """Apply an offline OpenCV enhancement profile to a three-channel BGR image."""
     if image is None or image.ndim != 3 or image.shape[2] != 3:
         raise ValueError("Expected a valid three-channel BGR image.")
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    if profile not in ENHANCEMENT_PROFILES:
+        raise ValueError(f"Unknown enhancement profile: {profile}")
+
+    working = image
+    if profile == "low-light":
+        gamma = 0.62
+        lookup = np.array([((value / 255.0) ** gamma) * 255 for value in range(256)], dtype=np.uint8)
+        working = cv2.LUT(image, lookup)
+
+    lab = cv2.cvtColor(working, cv2.COLOR_BGR2LAB)
     lightness, a_channel, b_channel = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+    clip_limit = 3.0 if profile == "low-light" else 2.2
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
     enhanced = cv2.merge((clahe.apply(lightness), a_channel, b_channel))
-    return cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+    enhanced_bgr = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+
+    if profile in ("visibility", "color-correct"):
+        channels = cv2.split(enhanced_bgr.astype(np.float32))
+        means = [float(np.mean(channel)) for channel in channels]
+        target = sum(means) / 3.0
+        corrected = cv2.merge([
+            np.clip(channel * min(1.35, max(0.75, target / max(mean, 1.0))), 0, 255)
+            for channel, mean in zip(channels, means)
+        ]).astype(np.uint8)
+        blend = 0.72 if profile == "color-correct" else 0.48
+        enhanced_bgr = cv2.addWeighted(enhanced_bgr, 1 - blend, corrected, blend, 0)
+
+    if profile == "visibility":
+        enhanced_bgr = cv2.fastNlMeansDenoisingColored(enhanced_bgr, None, 3, 3, 7, 21)
+    return enhanced_bgr
 
 
 def find_image_candidates(image: np.ndarray) -> list[dict[str, Any]]:

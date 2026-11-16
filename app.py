@@ -9,14 +9,14 @@ from typing import Literal
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from reporting import build_report, report_csv_bytes, report_pdf_bytes
 from simulation import MISSION_SECTIONS, SONAR_RADIUS, Simulation
-from vision import SAMPLE_DEFECTS, enhance_image, find_image_candidates, generate_sample_image
+from vision import ENHANCEMENT_PROFILES, SAMPLE_DEFECTS, enhance_image, find_image_candidates, generate_sample_image
 
 
 ROOT = Path(__file__).resolve().parent
@@ -37,10 +37,12 @@ class MissionRequest(BaseModel):
 class SettingsRequest(BaseModel):
     communication_mode: Literal["Tethered", "Acoustic"] = "Tethered"
     low_visibility: bool = False
+    water_condition: Literal["Clear", "Silt", "Heavy mud"] = "Clear"
 
 
 class SampleRequest(BaseModel):
     defect_type: str
+    profile: Literal["visibility", "low-light", "color-correct"] = "visibility"
 
 
 class ManualMoveRequest(BaseModel):
@@ -71,9 +73,11 @@ def current_state(advance: bool = True) -> dict:
         "sonar_phase": simulation.sonar_phase,
         "sonar_radius": SONAR_RADIUS,
         "low_visibility": simulation.low_visibility,
+        "water_condition": simulation.water_condition,
         "mission_sections": simulation.mission_sections,
         "inspection_depth": simulation.inspection_depth,
         "mission_progress": simulation.mission_progress,
+        "mission_priorities": simulation.prioritized_missions(),
     }
 
 
@@ -100,6 +104,7 @@ def start_mission(request: MissionRequest) -> dict:
 def update_settings(request: SettingsRequest) -> dict:
     simulation.set_communication_mode(request.communication_mode)
     simulation.low_visibility = request.low_visibility
+    simulation.set_water_condition(request.water_condition)
     return current_state(advance=False)
 
 
@@ -159,8 +164,10 @@ def download_pdf() -> Response:
     )
 
 
-def _analyze_image(image: np.ndarray, name: str) -> dict:
-    enhanced = enhance_image(image)
+def _analyze_image(image: np.ndarray, name: str, profile: str = "visibility") -> dict:
+    if profile not in ENHANCEMENT_PROFILES:
+        raise HTTPException(status_code=422, detail="Choose a supported image-enhancement profile.")
+    enhanced = enhance_image(image, profile)
     success, encoded = cv2.imencode(".jpg", enhanced, [cv2.IMWRITE_JPEG_QUALITY, 88])
     if not success:
         raise HTTPException(status_code=500, detail="Could not encode the enhanced inspection image.")
@@ -169,6 +176,7 @@ def _analyze_image(image: np.ndarray, name: str) -> dict:
         "width": int(image.shape[1]),
         "height": int(image.shape[0]),
         "enhanced_image": base64.b64encode(encoded.tobytes()).decode("ascii"),
+        "profile": profile,
         "candidates": find_image_candidates(image),
         "source": "OpenCV heuristic; candidates are not AI model predictions",
     }
@@ -178,11 +186,18 @@ def _analyze_image(image: np.ndarray, name: str) -> dict:
 def analyze_sample(request: SampleRequest) -> dict:
     if request.defect_type not in SAMPLE_DEFECTS:
         raise HTTPException(status_code=422, detail="Select a supported sample defect scenario.")
-    return _analyze_image(generate_sample_image(request.defect_type), f"Simulated sample: {request.defect_type}")
+    return _analyze_image(
+        generate_sample_image(request.defect_type),
+        f"Simulated sample: {request.defect_type}",
+        request.profile,
+    )
 
 
 @app.post("/api/vision/upload")
-async def analyze_upload(file: UploadFile = File(...)) -> dict:
+async def analyze_upload(
+    file: UploadFile = File(...),
+    profile: str = Form("visibility"),
+) -> dict:
     content = await file.read(MAX_IMAGE_BYTES + 1)
     if len(content) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail="Images must be 10 MB or smaller.")
@@ -190,7 +205,24 @@ async def analyze_upload(file: UploadFile = File(...)) -> dict:
     if image is None:
         raise HTTPException(status_code=415, detail="Unsupported or invalid image. Upload a PNG or JPEG.")
     try:
-        return _analyze_image(image, file.filename or "Uploaded inspection image")
+        return _analyze_image(image, file.filename or "Uploaded inspection image", profile)
     except (cv2.error, ValueError) as error:
         raise HTTPException(status_code=422, detail=f"Image analysis failed: {error}") from error
+
+
+@app.post("/api/vision/enhance-frame")
+async def enhance_video_frame(
+    file: UploadFile = File(...),
+    profile: str = Form("visibility"),
+) -> dict:
+    content = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Video frames must be 10 MB or smaller.")
+    image = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(status_code=415, detail="Unsupported video frame. Upload a PNG or JPEG frame.")
+    try:
+        return _analyze_image(image, "Simulated ROV video frame", profile)
+    except (cv2.error, ValueError) as error:
+        raise HTTPException(status_code=422, detail=f"Video-frame enhancement failed: {error}") from error
 

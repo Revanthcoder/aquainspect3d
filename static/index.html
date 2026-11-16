@@ -51,8 +51,14 @@
           <option value="Tethered">Tethered simulation</option>
           <option value="Acoustic">Acoustic simulation</option>
         </select>
+        <label class="field-label" for="water-condition">Water / mud condition</label>
+        <select id="water-condition" class="field-control">
+          <option value="Clear">Clear water</option>
+          <option value="Silt">Suspended silt</option>
+          <option value="Heavy mud">Heavy mud</option>
+        </select>
         <label class="switch-row">
-          <span><b>Low visibility</b><small>Degraded camera / clear sonar</small></span>
+          <span><b>Extra visibility loss</b><small>Additional camera obscuration</small></span>
           <input id="low-visibility" type="checkbox" role="switch">
           <i class="switch"></i>
         </label>
@@ -82,6 +88,7 @@
           <div class="topbar-right">
             <span class="simulation-chip"><i></i> SIMULATION MODE</span>
             <span class="topbar-date" id="local-clock">LOCAL · --:--:--</span>
+            <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode"><span id="theme-icon">☼</span><b id="theme-label">LIGHT</b></button>
             <span class="avatar">AI</span>
           </div>
         </header>
@@ -105,11 +112,12 @@
             <div class="mission-workspace">
               <section class="panel scene-panel">
                 <div class="panel-heading scene-heading">
-                  <div><div class="panel-title">UNDERWATER DIGITAL TWIN <span class="live-pill"><i></i> LIVE</span></div><div class="panel-caption">Procedural environment · orbit, pan and zoom</div></div>
+                  <div><div class="panel-title">UNDERWATER DIGITAL TWIN <span class="live-pill"><i></i> LIVE</span></div><div class="panel-caption">3D structural map · auto-select <b id="imaging-mode-badge" class="imaging-mode-badge">CAMERA-PRIMARY</b></div></div>
                   <div class="scene-tools">
                     <button class="layer-button selected" data-layer="route" title="Toggle route">ROUTE</button>
                     <button class="layer-button selected" data-layer="sonar" title="Toggle sonar">SONAR</button>
                     <button class="layer-button selected" data-layer="defects" title="Toggle defects">FINDINGS</button>
+                    <button class="layer-button selected" data-layer="riskMap" title="Toggle 3D structural risk map">RISK MAP</button>
                     <button id="camera-focus" class="layer-button" title="Zoom to the robot">FOCUS ROV</button>
                     <button id="zoom-in" class="icon-button" title="Zoom in" aria-label="Zoom in">+</button>
                     <button id="zoom-out" class="icon-button" title="Zoom out" aria-label="Zoom out">−</button>
@@ -119,12 +127,13 @@
                 <div class="scene-wrap">
                   <div id="three-canvas" class="three-canvas" aria-label="Interactive GPU-rendered Three.js dam and underwater vehicle scene"></div>
                   <div class="scene-overlay scene-overlay-top"><span class="coord-pin"></span><span id="scene-coordinates">X −14.0 · Y 4.0 · Z 3.0 m</span></div>
+                  <div id="risk-map-callout" class="scene-overlay risk-map-callout hidden" role="status"></div>
                   <div class="scene-overlay scene-overlay-bottom"><span>WALL DISTANCE <b id="wall-distance">4.0 m</b></span><span class="overlay-divider"></span><span>OBSTACLES IN RANGE <b id="obstacle-count">0</b></span><span class="overlay-divider"></span><span>RENDER <b id="render-mode">WEBGL2</b></span></div>
                   <div id="webgl-warning" class="webgl-warning hidden">WebGL2 is unavailable in this browser. Enable hardware acceleration or update your graphics driver.</div>
                 </div>
                 <div class="scene-legend">
                   <span><i class="legend-line line-route"></i> Planned route</span><span><i class="legend-line line-travel"></i> Traveled path</span><span><i class="legend-shape shape-defect"></i> Simulated finding</span><span><i class="legend-shape shape-obstacle"></i> Sonar return</span>
-                  <span class="legend-spacer"></span><span class="scene-axis">X HORIZONTAL <b>·</b> Y WALL RANGE <b>·</b> Z DEPTH</span>
+                  <span><i class="legend-shape shape-risk"></i> Risk scenario · click marker</span><span class="legend-spacer"></span><span class="scene-axis">X HORIZONTAL <b>·</b> Y WALL RANGE <b>·</b> Z DEPTH</span>
                 </div>
               </section>
 
@@ -135,6 +144,7 @@
                   <div class="position-values"><span id="position-x">−14.0</span><span id="position-y">4.0</span><span id="position-z">3.0</span></div>
                   <div class="position-axis"><span>X</span><span>Y</span><span>Z</span></div>
                   <div class="telemetry-divider"></div>
+                  <div class="telemetry-row"><span><i class="sensor-icon icon-sonar">⌁</i> Adaptive sensor</span><b id="telemetry-imaging-mode">CAMERA</b></div>
                   <div class="telemetry-row"><span><i class="sensor-icon icon-speed">↗</i> Vehicle speed</span><b id="telemetry-speed">0.00 <small>m/s</small></b></div>
                   <div class="telemetry-row"><span><i class="sensor-icon icon-camera">◉</i> Camera</span><b id="telemetry-camera">ONLINE</b></div>
                   <div class="telemetry-row"><span><i class="sensor-icon icon-sonar">◉</i> Sonar</span><b class="good-text">SCANNING</b></div>
@@ -157,6 +167,36 @@
                     </svg>
                   </div>
                   <div class="sonar-footer"><span id="sonar-detections">0 targets in range</span><span>WALL <b id="sonar-wall-range">4.0 m</b></span></div>
+                </section>
+
+                <section class="panel camera-panel">
+                  <div class="panel-heading">
+                    <div><div class="panel-title">ROV VIDEO · SIMULATED</div><div class="panel-caption" id="video-stream-status">Awaiting simulated video feed</div></div>
+                    <span id="camera-feed-indicator" class="camera-feed-indicator"><i></i><b>SIM FEED</b></span>
+                  </div>
+                  <div class="video-frame-wrap">
+                    <canvas id="live-video-canvas" width="480" height="270" role="img" aria-label="Procedural simulated underwater ROV camera video"></canvas>
+                    <img id="live-video-enhanced" class="live-video-enhanced hidden" alt="OpenCV-enhanced simulated underwater video frame">
+                    <div class="video-frame-hud"><span id="video-camera-mode">CAM · NOMINAL</span><span id="video-frame-clock">FRAME · 0000</span></div>
+                  </div>
+                  <div class="video-controls">
+                    <label class="video-enhance-toggle"><input id="enhance-live-video" type="checkbox"><span>OpenCV enhance stream</span></label>
+                    <select id="video-enhancement-profile" class="video-profile" aria-label="Live video enhancement profile">
+                      <option value="visibility">Visibility recovery</option>
+                      <option value="low-light">Low-light boost</option>
+                      <option value="color-correct">Color correction</option>
+                    </select>
+                  </div>
+                  <div class="video-caption">Procedural camera preview · no physical camera connected</div>
+                </section>
+
+                <section class="panel comms-panel">
+                  <div class="panel-heading"><div><div class="panel-title">LAND LINK · SIMULATED</div><div class="panel-caption" id="link-mode-caption">Tethered data and video channel</div></div><span class="system-status running" id="link-connection-indicator"><i></i> ONLINE</span></div>
+                  <div class="link-quality-row"><span>Link quality</span><b id="link-quality-value">99.9%</b></div>
+                  <div class="link-quality-track"><span id="link-quality-bar"></span></div>
+                  <div class="comms-stats"><div><span>LATENCY</span><b id="link-latency">38 ms</b></div><div><span>DATA RATE</span><b id="link-bandwidth">8 Mbps</b></div><div><span>PACKETS ACK</span><b id="link-packets">0</b></div></div>
+                  <div class="link-event" id="link-event">Waiting for mission telemetry</div>
+                  <div class="video-caption">Communication characteristics are illustrative simulation values, not measured link performance.</div>
                 </section>
 
                 <section class="panel manual-panel">
@@ -183,6 +223,12 @@
             <section class="panel findings-panel">
               <div class="panel-heading"><div><div class="panel-title">RECENT INSPECTION FINDINGS</div><div class="panel-caption">Scripted demonstration scenarios · detection is simulated</div></div><button class="text-button" data-view-link="analytics">View analytics <span>→</span></button></div>
               <div id="finding-feed" class="finding-feed"><div class="empty-feed"><span>◈</span><div><b>Inspection findings appear here</b><small>Launch a mission to scan the dam wall.</small></div></div></div>
+            </section>
+
+            <section class="risk-priority-section">
+              <div class="section-heading"><div><p class="eyebrow">STRUCTURAL DIGITAL TWIN · SIMULATED TRIAGE</p><h2>Prioritize the next inspection</h2><p class="page-subtitle">A severity/type-weighted risk index ranks the dam sections for follow-up.</p></div><button class="text-button" data-view-link="analytics">Open risk analytics <span>→</span></button></div>
+              <div id="mission-priority-list" class="mission-priority-list" aria-live="polite"></div>
+              <div class="risk-method-note">Risk index is a demonstration triage score—not a structural health assessment or engineering recommendation.</div>
             </section>
 
             <div class="disclaimer-footer">AQUAINSPECT 3D · EDUCATIONAL SIMULATOR <span>All telemetry, findings, obstacle returns and communications are synthetic.</span></div>
@@ -219,6 +265,11 @@
               <article class="analytics-kpi"><span>PATH DISTANCE</span><b id="analytics-distance">0.0 <small>m</small></b><small>Planned route <span id="analytics-planned">0.0 m</span></small><div class="kpi-inline"><i class="dot-cyan"></i> A* navigation</div></article>
               <article class="analytics-kpi"><span>BATTERY REMAINING</span><b id="analytics-battery">100%</b><small>Estimated simulation charge</small><div class="mini-progress"><span id="analytics-battery-bar"></span></div></article>
             </div>
+            <section class="risk-analytics-section">
+              <div class="section-heading"><div><p class="eyebrow">DIGITAL TWIN · FUTURE MISSION PLANNING</p><h2>Risk-ranked inspection queue</h2><p class="page-subtitle">Select a recommendation to configure that section for the next simulated survey.</p></div><span class="simulation-chip"><i></i> TRIAGE MODEL · SIMULATED</span></div>
+              <div id="analytics-priority-list" class="mission-priority-list" aria-live="polite"></div>
+              <div class="risk-method-note">Scores combine the scripted defect severity and type, with a small increase for recorded scenario findings. Values are illustrative only.</div>
+            </section>
             <div class="analytics-grid">
               <section class="panel chart-panel"><div class="panel-heading"><div><div class="panel-title">MISSION PROGRESS</div><div class="panel-caption">Coverage and battery · current mission</div></div><span class="chart-units">PERCENT</span></div><div class="chart-wrap"><canvas id="progress-chart" aria-label="Coverage and battery line chart"></canvas></div></section>
               <section class="panel chart-panel"><div class="panel-heading"><div><div class="panel-title">FINDINGS BY SEVERITY</div><div class="panel-caption">Distribution of scripted inspection scenarios</div></div><span class="chart-units">COUNT</span></div><div class="chart-wrap doughnut-wrap"><canvas id="severity-chart" aria-label="Defects severity doughnut chart"></canvas><div class="doughnut-center"><b id="severity-total">0</b><span>FINDINGS</span></div></div><div id="severity-legend" class="severity-legend"></div></section>
@@ -247,11 +298,11 @@
           </section>
 
           <section class="view" id="view-imagelab" data-page-title="IMAGE INSPECTION">
-            <div class="page-heading"><p class="eyebrow">COMPUTER VISION WORKBENCH</p><h1>Image inspection</h1><p class="page-subtitle">Enhance a sample or upload an image and inspect OpenCV heuristic candidates.</p></div>
-            <div class="analytics-note"><span>i</span> The built-in analyzer uses image-processing heuristics, not a trained AI model. Sample scenarios are generated—not field photography.</div>
+            <div class="page-heading"><p class="eyebrow">ADAPTIVE UNDERWATER IMAGING</p><h1>Image enhancement</h1><p class="page-subtitle">Recover contrast, brighten low-light footage, or correct underwater color casts with local OpenCV processing.</p></div>
+            <div class="analytics-note"><span>i</span> Enhancement improves appearance but cannot recover detail that was never captured. Candidate regions use heuristics, not a trained AI model; samples are generated, not field footage.</div>
             <div class="image-lab-grid">
-              <section class="panel image-input-panel"><div class="panel-heading"><div><div class="panel-title">INSPECTION IMAGE</div><div class="panel-caption">Choose a generated scenario or upload PNG/JPEG</div></div></div><label class="field-label" for="sample-defect">Sample scenario</label><select id="sample-defect" class="field-control"><option>Crack</option><option>Concrete erosion</option><option>Water leakage</option><option>Surface damage</option></select><div class="upload-or">OR UPLOAD YOUR OWN</div><label for="image-upload" class="upload-zone"><span class="upload-icon">↑</span><b>Choose an inspection image</b><span>PNG or JPEG · maximum 10 MB</span><input id="image-upload" type="file" accept="image/png,image/jpeg,image/bmp"></label><button id="analyze-sample" class="button button-primary full-button">Analyze sample image</button><button id="analyze-upload" class="button button-secondary full-button" disabled>Analyze uploaded image</button><p class="image-file-name" id="image-file-name">No file selected</p></section>
-              <section class="panel image-preview-panel"><div class="panel-heading"><div><div class="panel-title">ENHANCED IMAGE</div><div class="panel-caption">CLAHE contrast enhancement · OpenCV</div></div><span id="image-stage-pill" class="image-stage-pill">WAITING FOR IMAGE</span></div><div id="image-placeholder" class="image-placeholder"><span>◫</span><b>Your enhanced image appears here</b><small>Run an analysis to view the sample and candidate regions.</small></div><div id="image-result" class="image-result hidden"><img id="enhanced-image" alt="Enhanced inspection image"><div id="candidate-boxes" class="candidate-boxes"></div></div><div id="candidate-results" class="candidate-results"></div></section>
+              <section class="panel image-input-panel"><div class="panel-heading"><div><div class="panel-title">IMAGE SOURCE</div><div class="panel-caption">Sample scenario or local PNG/JPEG</div></div></div><label class="field-label" for="enhancement-profile">Enhancement technique</label><select id="enhancement-profile" class="field-control"><option value="visibility">Visibility recovery · CLAHE + denoise</option><option value="low-light">Low-light boost · gamma + CLAHE</option><option value="color-correct">Color correction · gray-world balance</option></select><label class="field-label" for="sample-defect">Simulated inspection scene</label><select id="sample-defect" class="field-control"><option>Crack</option><option>Concrete erosion</option><option>Water leakage</option><option>Surface damage</option></select><div class="upload-or">OR UPLOAD YOUR OWN IMAGE</div><label for="image-upload" class="upload-zone"><span class="upload-icon">↑</span><b>Choose an inspection image</b><span>PNG or JPEG · maximum 10 MB</span><input id="image-upload" type="file" accept="image/png,image/jpeg,image/bmp"></label><button id="analyze-sample" class="button button-primary full-button">Enhance sample image</button><button id="analyze-upload" class="button button-secondary full-button" disabled>Enhance uploaded image</button><p class="image-file-name" id="image-file-name">No file selected</p></section>
+              <section class="panel image-preview-panel"><div class="panel-heading"><div><div class="panel-title">ENHANCED IMAGE</div><div class="panel-caption" id="enhancement-caption">OpenCV processing · local and offline</div></div><span id="image-stage-pill" class="image-stage-pill">WAITING FOR IMAGE</span></div><div id="image-placeholder" class="image-placeholder"><span>◫</span><b>Your enhanced image appears here</b><small>Choose an enhancement technique and process a sample or uploaded image.</small></div><div id="image-result" class="image-result hidden"><img id="enhanced-image" alt="Enhanced inspection image"><div id="candidate-boxes" class="candidate-boxes"></div></div><div id="candidate-results" class="candidate-results"></div></section>
             </div>
             <div class="disclaimer-footer">CANDIDATE REGIONS ARE VISUAL HEURISTICS, NOT CONFIRMED DEFECTS OR MODEL CONFIDENCE SCORES.</div>
           </section>

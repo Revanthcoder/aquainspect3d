@@ -15,6 +15,18 @@ WORLD_BOUNDS = ((-18, 18), (1, 8), (0, 24))
 WALL_X_BOUNDS = (-18, 18)
 WALL_DEPTH = 24
 SONAR_RADIUS = 9.0
+SEVERITY_RISK = {"High": 72, "Medium": 48, "Low": 24}
+DEFECT_RISK_BONUS = {
+    "Crack": 10,
+    "Concrete erosion": 6,
+    "Water leakage": 14,
+    "Surface damage": 4,
+}
+WATER_CONDITIONS = {
+    "Clear": {"obscuration": 0.08, "camera": "Clear"},
+    "Silt": {"obscuration": 0.42, "camera": "Reduced visibility"},
+    "Heavy mud": {"obscuration": 0.78, "camera": "Very low visibility"},
+}
 MISSION_SECTIONS = {
     "Full Dam Survey": (-12, -6, 0, 6, 12),
     "Left Section": (-12, -9, -6),
@@ -96,11 +108,15 @@ class Simulation:
             (10.0, 2.0, 19.0, 1.3),
             (-13.0, 5.0, 17.0, 1.0),
         )
-        self.defect_scenarios = (
+        scenarios = (
             {"id": "SIM-CR-01", "type": "Crack", "location": (-9.0, 0.0, 12.0), "severity": "High"},
             {"id": "SIM-ER-02", "type": "Concrete erosion", "location": (-1.0, 0.0, 12.0), "severity": "Medium"},
             {"id": "SIM-LK-03", "type": "Water leakage", "location": (6.0, 0.0, 13.0), "severity": "High"},
             {"id": "SIM-SD-04", "type": "Surface damage", "location": (11.0, 0.0, 12.0), "severity": "Low"},
+        )
+        self.defect_scenarios = tuple(
+            {**scenario, "risk_score": self.risk_score(scenario)}
+            for scenario in scenarios
         )
         self.reset()
 
@@ -126,6 +142,7 @@ class Simulation:
         self.sonar_phase = 0.0
         self.last_step_dt = 0.0
         self.low_visibility = False
+        self.water_condition = "Clear"
         self.manual_move_active = False
 
     def start_mission(self, sections: Iterable[str], inspection_depth: int = 12) -> None:
@@ -224,6 +241,63 @@ class Simulation:
             raise ValueError("Communication mode must be Tethered or Acoustic.")
         self.communication_mode = mode
 
+    def set_water_condition(self, condition: str) -> None:
+        if condition not in WATER_CONDITIONS:
+            raise ValueError("Water condition must be Clear, Silt, or Heavy mud.")
+        self.water_condition = condition
+
+    @staticmethod
+    def risk_score(scenario: dict[str, Any]) -> int:
+        severity_score = SEVERITY_RISK.get(scenario.get("severity"), 0)
+        defect_bonus = DEFECT_RISK_BONUS.get(scenario.get("type"), 0)
+        return min(100, severity_score + defect_bonus)
+
+    @property
+    def visibility_obscuration(self) -> float:
+        obscuration = WATER_CONDITIONS[self.water_condition]["obscuration"]
+        return max(obscuration, 0.6) if self.low_visibility else obscuration
+
+    @property
+    def active_imaging_mode(self) -> str:
+        if self.visibility_obscuration >= 0.6:
+            return "Sonar-primary"
+        if self.visibility_obscuration >= 0.35:
+            return "Camera + sonar fusion"
+        return "Camera-primary"
+
+    def prioritized_missions(self) -> list[dict[str, Any]]:
+        section_for_x = {
+            "Left Section": lambda x: x < -6,
+            "Center Section": lambda x: -6 <= x < 6,
+            "Right Section": lambda x: x >= 6,
+        }
+        queue = []
+        found_ids = {item["id"] for item in self.detected_defects}
+        for section, includes_x in section_for_x.items():
+            scenarios = [
+                scenario for scenario in self.defect_scenarios
+                if includes_x(scenario["location"][0])
+            ]
+            found = [scenario for scenario in scenarios if scenario["id"] in found_ids]
+            highest_risk = max(scenario["risk_score"] for scenario in scenarios)
+            score = min(100, highest_risk + len(found) * 5)
+            highest_scenario = max(scenarios, key=lambda scenario: scenario["risk_score"])
+            queue.append(
+                {
+                    "section": section,
+                    "risk_score": score,
+                    "priority": "Critical" if score >= 90 else "High" if score >= 75 else "Moderate",
+                    "finding_count": len(found),
+                    "highest_risk_scenario": highest_scenario["type"],
+                    "reason": (
+                        f"{len(found)} simulated finding(s) recorded in this section"
+                        if found else f"Unscanned {highest_scenario['severity'].lower()}-risk {highest_scenario['type'].lower()} scenario"
+                    ),
+                    "status": "In current mission" if "Full Dam Survey" in self.mission_sections or section in self.mission_sections else "Recommended",
+                }
+            )
+        return sorted(queue, key=lambda item: (-item["risk_score"], item["section"]))
+
     def _record_communication_state(self, connected: bool) -> None:
         if connected == self.communication_connected:
             return
@@ -239,16 +313,27 @@ class Simulation:
 
     def _scan_for_defects(self) -> None:
         already_detected = {item["id"] for item in self.detected_defects}
+        detection_radius = {
+            "Camera-primary": 3.0,
+            "Camera + sonar fusion": 3.7,
+            "Sonar-primary": 4.4,
+        }[self.active_imaging_mode]
+        detection_method = {
+            "Camera-primary": "Simulated camera inspection",
+            "Camera + sonar fusion": "Simulated camera + sonar fusion",
+            "Sonar-primary": "Simulated sonar anomaly classification",
+        }[self.active_imaging_mode]
         for scenario in self.defect_scenarios:
             if scenario["id"] in already_detected:
                 continue
-            if _distance(self.position, scenario["location"]) <= 3.0:
+            if _distance(self.position, scenario["location"]) <= detection_radius:
                 self.detected_defects.append(
                     {
                         **scenario,
                         "location": list(scenario["location"]),
                         "timestamp": self._timestamp(),
                         "confidence": None,
+                        "detection_method": detection_method,
                         "source": "Simulated inspection scenario",
                     }
                 )
@@ -265,10 +350,11 @@ class Simulation:
 
         self.sim_time += dt
         phase = self.sim_time % 45.0
-        outage = 24.0 <= phase < 28.0 if self.communication_mode == "Acoustic" else 39.0 <= phase < 41.0
+        outage = self.communication_mode == "Acoustic" and 24.0 <= phase < 28.0
         self._record_communication_state(not outage)
         if self.communication_connected:
-            self.packet_count += max(1, int(dt * 4))
+            packet_rate = 4 if self.communication_mode == "Tethered" else 1
+            self.packet_count += max(1, int(dt * packet_rate))
 
         if self.status == "Paused":
             self.speed = 0.0
@@ -343,10 +429,19 @@ class Simulation:
             "progress": self.mission_progress,
             "thrusters": "Active" if self.status in ("Running", "Returning to surface") or (self.status == "Manual control" and self.manual_move_active) else "Standby",
             "manual_move_active": self.manual_move_active,
-            "camera": "Degraded (low visibility)" if self.low_visibility else "Online",
+            "camera": WATER_CONDITIONS[self.water_condition]["camera"] if self.visibility_obscuration < 0.6 else "Very low visibility",
             "sonar": "Scanning",
+            "imaging_mode": self.active_imaging_mode,
+            "active_sensor": "Sonar" if self.active_imaging_mode == "Sonar-primary" else "Camera + sonar" if self.active_imaging_mode == "Camera + sonar fusion" else "Camera",
             "communication": "Connected" if self.communication_connected else "Interrupted",
             "communication_mode": self.communication_mode,
+            "link_quality": 99.9 if self.communication_mode == "Tethered" and self.communication_connected else 92.0 if self.communication_connected else 0.0,
+            "link_latency_ms": 38 if self.communication_mode == "Tethered" else 450,
+            "link_bandwidth_kbps": 8000 if self.communication_mode == "Tethered" else 16,
+            "video_stream": "Live simulation · 24 FPS" if self.communication_mode == "Tethered" else "Compressed simulation · 2 FPS",
+            "video_fps": 24 if self.communication_mode == "Tethered" else 2,
+            "water_condition": self.water_condition,
+            "visibility_obscuration": self.visibility_obscuration,
             "packets": self.packet_count,
         }
 

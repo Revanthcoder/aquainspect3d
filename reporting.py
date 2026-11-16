@@ -36,6 +36,7 @@ def build_report(simulation: Simulation) -> dict[str, Any]:
         "obstacles_detected": list(simulation.sonar_obstacles),
         "telemetry": telemetry,
         "communication_events": list(simulation.communication_events),
+        "mission_priorities": simulation.prioritized_missions(),
     }
 
 
@@ -52,13 +53,16 @@ def report_csv_bytes(simulation: Simulation) -> bytes:
     writer.writerow(("Distance traveled (m)", report["distance_traveled_m"]))
     writer.writerow(("Robot position X/Y/Z (m)", f"{report['telemetry']['x']:.2f}/{report['telemetry']['y']:.2f}/{report['telemetry']['z']:.2f}"))
     writer.writerow(("Battery (%)", f"{report['telemetry']['battery']:.1f}"))
+    writer.writerow(("Water condition", report["telemetry"]["water_condition"]))
+    writer.writerow(("Adaptive imaging mode", report["telemetry"]["imaging_mode"]))
     writer.writerow(())
-    writer.writerow(("Defect ID", "Type", "X (m)", "Y (m)", "Z (m)", "Severity", "Confidence", "Source", "Timestamp"))
+    writer.writerow(("Defect ID", "Type", "X (m)", "Y (m)", "Z (m)", "Severity", "Risk score", "Detection method", "Confidence", "Source", "Timestamp"))
     for defect in report["defects"]:
         x, y, z = defect["location"]
         writer.writerow(
             (
-                defect["id"], defect["type"], x, y, z, defect["severity"],
+                defect["id"], defect["type"], x, y, z, defect["severity"], defect["risk_score"],
+                defect.get("detection_method", "Simulated"),
                 defect["confidence"] if defect["confidence"] is not None else "N/A (simulated)",
                 defect["source"], defect["timestamp"],
             )
@@ -67,6 +71,10 @@ def report_csv_bytes(simulation: Simulation) -> bytes:
     writer.writerow(("Obstacle ID", "X (m)", "Y (m)", "Z (m)", "Range (m)"))
     for obstacle in report["obstacles_detected"]:
         writer.writerow((obstacle["id"], obstacle["x"], obstacle["y"], obstacle["z"], round(obstacle["distance"], 2)))
+    writer.writerow(())
+    writer.writerow(("Follow-up mission priority", "Risk index", "Recorded findings", "Recommendation"))
+    for priority in report["mission_priorities"]:
+        writer.writerow((priority["section"], priority["risk_score"], priority["finding_count"], priority["reason"]))
     return buffer.getvalue().encode("utf-8-sig")
 
 
@@ -105,6 +113,7 @@ def report_pdf_bytes(simulation: Simulation) -> bytes:
         ["Sections", ", ".join(report["sections"]) or "Not selected", "Inspection depth", f"{report['inspection_depth_m']} m"],
         ["Distance traveled", f"{report['distance_traveled_m']:.1f} m", "Planned distance", f"{report['planned_distance_m']:.1f} m"],
         ["Robot position (X, Y, Z)", f"{telemetry['x']:.1f}, {telemetry['y']:.1f}, {telemetry['z']:.1f} m", "Battery", f"{telemetry['battery']:.1f}%"],
+        ["Water condition", telemetry["water_condition"], "Adaptive sensor", telemetry["imaging_mode"]],
     ]
     story.extend(
         [
@@ -120,15 +129,14 @@ def report_pdf_bytes(simulation: Simulation) -> bytes:
             Paragraph(f"Detected defects ({len(report['defects'])})", styles["Heading2"]),
         ]
     )
-    defect_rows = [["ID", "Type", "X / Y / Z (m)", "Severity", "Confidence", "Source", "Timestamp"]]
+    defect_rows = [["ID", "Type", "X / Y / Z (m)", "Severity", "Risk", "Detection method", "Timestamp"]]
     for defect in report["defects"]:
         x, y, z = defect["location"]
         defect_rows.append(
             [
                 defect["id"], defect["type"], f"{x:.1f} / {y:.1f} / {z:.1f}",
-                defect["severity"],
-                str(defect["confidence"]) if defect["confidence"] is not None else "N/A",
-                defect["source"], defect["timestamp"],
+                defect["severity"], f"{defect['risk_score']}/100",
+                defect.get("detection_method", "Simulated"), defect["timestamp"],
             ]
         )
     if len(defect_rows) == 1:
@@ -155,6 +163,32 @@ def report_pdf_bytes(simulation: Simulation) -> bytes:
         ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#A8C4CC")),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("PADDING", (0, 0), (-1, -1), 5),
+    ])))
+    story.extend(
+        [
+            Spacer(1, 6 * mm),
+            Paragraph("Prioritized follow-up inspection missions", styles["Heading2"]),
+            Paragraph(
+                "Risk index is a simulated severity/type-weighted triage aid, not an engineering assessment.",
+                styles["BodyText"],
+            ),
+        ]
+    )
+    priority_rows = [["Rank", "Dam section", "Risk index", "Scenario", "Recorded findings", "Recommendation"]]
+    priority_rows.extend(
+        [
+            [index, item["section"], f"{item['risk_score']}/100", item["highest_risk_scenario"], item["finding_count"], item["reason"]]
+            for index, item in enumerate(report["mission_priorities"], start=1)
+        ]
+    )
+    story.append(Table(priority_rows, repeatRows=1, style=TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#123F52")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#A8C4CC")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F7F8")]),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("PADDING", (0, 0), (-1, -1), 5),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ])))
     image_directory = Path(__file__).resolve().parent / "static" / "images"
     reference_photos = [

@@ -13,10 +13,16 @@ const state = {
   charts: {},
   file: null,
   imageBounds: [],
-  layerVisibility: { route: true, sonar: true, defects: true },
+  layerVisibility: { route: true, sonar: true, defects: true, riskMap: true },
   soundEnabled: true,
   obstacleIds: new Set(),
   audioContext: null,
+  videoFrame: 0,
+  videoLastDraw: 0,
+  videoEnhancementPending: false,
+  videoEnhancementErrorShown: false,
+  selectedRiskId: null,
+  theme: localStorage.getItem("aquainspect-theme") === "light" ? "light" : "dark",
 };
 
 const COLORS = {
@@ -413,23 +419,8 @@ function createScene() {
   scene.add(particles);
 
   const defectsGroup = new THREE.Group();
-  DEFAULT_SCENARIOS.forEach((finding) => {
-    const [x, , depth] = finding.location;
-    const color = finding.severity === "High" ? COLORS.coral : finding.severity === "Medium" ? COLORS.amber : COLORS.green;
-    const marker = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 16, 12),
-      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.52, roughness: 0.4 }),
-    );
-    marker.position.set(x, -depth, damFaceZ(x) + 0.28);
-    defectsGroup.add(marker);
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.31, 0.35, 28),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.75, side: THREE.DoubleSide }),
-    );
-    ring.position.set(x, -depth, damFaceZ(x) + 0.27);
-    defectsGroup.add(ring);
-  });
-  scene.add(defectsGroup);
+  const riskMapGroup = new THREE.Group();
+  scene.add(defectsGroup, riskMapGroup);
 
   const plannedRouteGroup = new THREE.Group();
   const traveledPathGroup = new THREE.Group();
@@ -467,11 +458,25 @@ function createScene() {
   const model = {
     renderer, scene, camera, controls, host, robot, plannedRouteGroup, traveledPathGroup, sonarGroup,
     rangeRings, beamGeometry, beamMaterial, sonarLine, particles, particleMaterial,
-    plumeGroup, defectsGroup, zoneGroup, axesGroup, wallGrid, resize,
+    plumeGroup, defectsGroup, riskMapGroup, riskNodes: [], riskSignature: "", detectedSignature: "", zoneGroup, axesGroup, wallGrid, resize,
   };
   renderer.domElement.addEventListener("webglcontextlost", (event) => {
     event.preventDefault();
     showToast("WebGL2 context lost. Try reloading the page.");
+  });
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  renderer.domElement.addEventListener("click", (event) => {
+    if (!state.layerVisibility.riskMap || !sceneModel.riskNodes.length) return;
+    const bounds = renderer.domElement.getBoundingClientRect();
+    pointer.set(
+      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObject(riskMapGroup, true)
+      .find((item) => item.object.userData.riskRecord);
+    if (hit) showRiskMapCallout(hit.object.userData.riskRecord);
   });
 
   function resize() {
@@ -676,15 +681,99 @@ function updateScene(snapshot) {
   sceneModel.traveledPathGroup.visible = state.layerVisibility.route;
   sceneModel.sonarGroup.visible = state.layerVisibility.sonar;
   sceneModel.defectsGroup.visible = state.layerVisibility.defects;
-  sceneModel.particleMaterial.opacity = snapshot.low_visibility ? 0.62 : 0.32;
-  sceneModel.particleMaterial.size = snapshot.low_visibility ? 0.13 : 0.085;
-  sceneModel.scene.fog.density = snapshot.low_visibility ? 0.018 : 0.006;
+  updateRiskMap(snapshot);
+  sceneModel.riskMapGroup.visible = state.layerVisibility.riskMap;
+  $("#risk-map-callout").classList.toggle("hidden", !state.layerVisibility.riskMap || !state.selectedRiskId);
+  updateDetectedMarkers(snapshot.defects || []);
+  const obscuration = snapshot.telemetry.visibility_obscuration ?? (snapshot.low_visibility ? 0.6 : 0.08);
+  sceneModel.particleMaterial.opacity = 0.2 + obscuration * 0.58;
+  sceneModel.particleMaterial.size = 0.07 + obscuration * 0.12;
+  sceneModel.scene.fog.density = 0.003 + obscuration * 0.025;
   sceneModel.plumeGroup.visible = state.layerVisibility.defects;
   sceneModel.zoneGroup.visible = state.layerVisibility.route;
   sceneModel.robot.userData.alertBeacon.material.emissiveIntensity = snapshot.obstacles?.length ? 1.6 : 0.04;
 
   const sonarObstacles = snapshot.obstacles || [];
   renderSonarReturns(sonarObstacles, position);
+}
+
+function riskMarkerColor(score, detected) {
+  if (detected || score >= 80) return COLORS.coral;
+  if (score >= 55) return COLORS.amber;
+  return COLORS.green;
+}
+
+function updateRiskMap(snapshot) {
+  const scenarios = snapshot.defect_scenarios || DEFAULT_SCENARIOS;
+  const signature = scenarios.map((item) => `${item.id}:${item.risk_score ?? 0}`).join("|");
+  if (signature !== sceneModel.riskSignature) {
+    sceneModel.riskMapGroup.clear();
+    sceneModel.riskNodes = scenarios.map((scenario) => {
+      const [x, , depth] = scenario.location;
+      const group = new THREE.Group();
+      group.position.set(x, -depth, damFaceZ(x) + 0.38);
+      const hotspot = new THREE.Mesh(
+        new THREE.CircleGeometry(0.46 + (scenario.risk_score || 0) / 260, 32),
+        new THREE.MeshBasicMaterial({ color: COLORS.coral, transparent: true, opacity: 0.2, depthWrite: false }),
+      );
+      group.add(hotspot);
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.26 + (scenario.risk_score || 0) / 450, 0.045, 8, 28),
+        new THREE.MeshBasicMaterial({ color: COLORS.coral, transparent: true, opacity: 0.88 }),
+      );
+      group.add(ring);
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.17, 16, 12),
+        new THREE.MeshBasicMaterial({ color: COLORS.coral }),
+      );
+      marker.userData.riskRecord = scenario;
+      group.add(marker);
+      sceneModel.riskMapGroup.add(group);
+      return { scenario, hotspot, ring, marker };
+    });
+    sceneModel.riskSignature = signature;
+  }
+
+  const detectedIds = new Set((snapshot.defects || []).map((item) => item.id));
+  for (const node of sceneModel.riskNodes) {
+    const detected = detectedIds.has(node.scenario.id);
+    const color = riskMarkerColor(node.scenario.risk_score || 0, detected);
+    node.marker.material.color.set(color);
+    node.ring.material.color.set(color);
+    node.hotspot.material.color.set(color);
+    node.hotspot.material.opacity = detected ? 0.34 : 0.15;
+    node.marker.scale.setScalar(detected ? 1.28 : 1);
+    node.scenario.detected = detected;
+  }
+}
+
+function updateDetectedMarkers(findings) {
+  const signature = findings.map((item) => item.id).join("|");
+  if (signature === sceneModel.detectedSignature) return;
+  for (const child of [...sceneModel.defectsGroup.children]) {
+    child.geometry?.dispose();
+    child.material?.dispose();
+    sceneModel.defectsGroup.remove(child);
+  }
+  findings.forEach((finding) => {
+    const [x, , depth] = finding.location;
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 16, 12),
+      new THREE.MeshStandardMaterial({ color: COLORS.coral, emissive: COLORS.coral, emissiveIntensity: 0.8, roughness: 0.4 }),
+    );
+    marker.position.set(x, -depth, damFaceZ(x) + 0.55);
+    marker.userData.findingId = finding.id;
+    sceneModel.defectsGroup.add(marker);
+  });
+  sceneModel.detectedSignature = signature;
+}
+
+function showRiskMapCallout(record) {
+  state.selectedRiskId = record.id;
+  const callout = $("#risk-map-callout");
+  const detected = Boolean(record.detected);
+  callout.innerHTML = `<button type="button" class="risk-callout-close" aria-label="Close risk details">×</button><span class="risk-callout-kicker">${detected ? "SIMULATED FINDING" : "UNSCANNED SCENARIO"}</span><b>${escapeHTML(record.type)}</b><span>${escapeHTML(record.severity)} severity · risk index ${Number(record.risk_score)}/100</span><small>${escapeHTML(record.id)} · X ${Number(record.location[0]).toFixed(1)} m · depth ${Number(record.location[2]).toFixed(1)} m</small>`;
+  callout.classList.remove("hidden");
 }
 
 function renderScene() {
@@ -697,6 +786,130 @@ function renderScene() {
   sceneModel.renderer.render(sceneModel.scene, sceneModel.camera);
   requestAnimationFrame(renderScene);
 }
+
+function drawLiveVideo(timestamp) {
+  const canvas = $("#live-video-canvas");
+  if (!canvas) return;
+  const telemetry = state.latest?.telemetry;
+  const fps = telemetry?.video_fps || 24;
+  if (timestamp - state.videoLastDraw >= 1000 / fps && telemetry?.communication !== "Interrupted") {
+    state.videoLastDraw = timestamp;
+    state.videoFrame += 1;
+    const context = canvas.getContext("2d");
+    const { width, height } = canvas;
+    const obscuration = telemetry?.visibility_obscuration ?? 0.08;
+    const condition = telemetry?.water_condition || "Clear";
+    const camera = telemetry?.camera || "Clear";
+    const frameRate = telemetry?.video_stream || "Live simulation · 24 FPS";
+    const acoustic = telemetry?.communication_mode === "Acoustic";
+
+    const water = context.createLinearGradient(0, 0, width, height);
+    water.addColorStop(0, "#0b3140");
+    water.addColorStop(0.52, "#10313a");
+    water.addColorStop(1, "#071a25");
+    context.fillStyle = water;
+    context.fillRect(0, 0, width, height);
+
+    const drift = (state.videoFrame * (acoustic ? 0.025 : 0.08)) % 24;
+    context.save();
+    context.translate(-drift, 0);
+    for (let x = -24; x < width + 24; x += 80) {
+      const shade = ((x / 80) % 2 + 2) % 2 ? "#526566" : "#64716a";
+      context.fillStyle = shade;
+      context.fillRect(x, 15, 78, height - 31);
+      context.fillStyle = "rgba(197, 194, 169, .15)";
+      context.fillRect(x + 4, 17, 3, height - 35);
+      context.fillStyle = "rgba(12, 26, 30, .38)";
+      context.fillRect(x + 76, 15, 4, height - 31);
+    }
+    context.restore();
+
+    context.strokeStyle = "rgba(210, 230, 215, .28)";
+    context.lineWidth = 1;
+    for (let y = 55; y < height - 20; y += 50) {
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+      context.stroke();
+    }
+
+    const crackX = 105 + Math.sin(state.videoFrame * 0.008) * 5;
+    context.strokeStyle = "rgba(22, 23, 22, .75)";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(crackX, 70);
+    context.lineTo(crackX - 7, 92);
+    context.lineTo(crackX + 4, 108);
+    context.lineTo(crackX - 5, 132);
+    context.stroke();
+
+    const sonarTarget = state.latest?.obstacles?.[0];
+    if (sonarTarget) {
+      const markerX = 300 + Math.sin(state.videoFrame * 0.015) * 14;
+      const markerY = 171;
+      context.strokeStyle = "#ff735f";
+      context.lineWidth = 2;
+      context.beginPath();
+      context.arc(markerX, markerY, 11 + Math.sin(timestamp * 0.006) * 2, 0, Math.PI * 2);
+      context.stroke();
+      context.fillStyle = "#ffb292";
+      context.font = "10px monospace";
+      context.fillText(sonarTarget.id, markerX + 16, markerY + 4);
+    }
+
+    const light = context.createRadialGradient(width * 0.57, height * 0.52, 4, width * 0.57, height * 0.52, 180);
+    light.addColorStop(0, "rgba(183, 251, 239, .2)");
+    light.addColorStop(1, "rgba(92, 207, 215, 0)");
+    context.fillStyle = light;
+    context.fillRect(0, 0, width, height);
+
+    if (obscuration > 0) {
+      context.fillStyle = `rgba(130, 153, 145, ${Math.min(0.72, obscuration * 0.7)})`;
+      context.fillRect(0, 0, width, height);
+      let seed = state.videoFrame * 197 + 31;
+      const random = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return seed / 4294967296;
+      };
+      context.fillStyle = `rgba(205, 215, 198, ${0.08 + obscuration * 0.14})`;
+      const particles = Math.round(18 + obscuration * 190);
+      for (let index = 0; index < particles; index += 1) {
+        const x = (random() * width + state.videoFrame * (random() - 0.5) * 0.35) % width;
+        const y = random() * height;
+        const radius = 0.4 + random() * (0.7 + obscuration * 2.4);
+        context.beginPath();
+        context.arc(x, y, radius, 0, Math.PI * 2);
+        context.fill();
+      }
+    }
+
+    if (acoustic) {
+      context.fillStyle = "rgba(11, 20, 25, .6)";
+      context.fillRect(0, 0, width, 16);
+      context.fillStyle = "#f0bf79";
+      context.font = "9px monospace";
+      context.fillText("ACOUSTIC LOW-RATE VIDEO PREVIEW", 9, 12);
+    }
+    context.fillStyle = "rgba(3, 10, 14, .7)";
+    context.fillRect(0, height - 19, width, 19);
+    context.fillStyle = "#b1d0ca";
+    context.font = "9px monospace";
+    context.fillText(`XYZ ${telemetry ? `${telemetry.x.toFixed(1)} / ${telemetry.y.toFixed(1)} / ${telemetry.z.toFixed(1)} m` : "SIMULATION"}`, 8, height - 7);
+
+    $("#video-camera-mode").textContent = telemetry?.imaging_mode === "Sonar-primary"
+      ? `SONAR PRIMARY · CAM ${camera.toUpperCase()}`
+      : telemetry?.imaging_mode === "Camera + sonar fusion" ? "CAMERA + SONAR FUSION" : `CAM · ${camera.toUpperCase()}`;
+    $("#video-frame-clock").textContent = `FRAME · ${String(state.videoFrame).padStart(4, "0")}`;
+    $("#camera-feed-indicator").classList.toggle("offline", telemetry?.communication === "Interrupted");
+    $("#camera-feed-indicator b").textContent = telemetry?.communication === "Interrupted" ? "BUFFERING" : "SIM FEED";
+    $("#video-stream-status").textContent = telemetry?.communication === "Interrupted"
+      ? "Link interrupted · preview buffering"
+      : telemetry ? `${frameRate} · ${telemetry.imaging_mode} scan logic` : "Awaiting simulated video feed";
+  }
+  requestAnimationFrame(drawLiveVideo);
+}
+
+requestAnimationFrame(drawLiveVideo);
 
 function renderSonarReturns(obstacles, position) {
   const returnLayer = $("#sonar-obstacles");
@@ -778,6 +991,9 @@ function updateState(snapshot) {
   const priorStatus = state.latest?.telemetry?.status;
   const telemetry = snapshot.telemetry;
   state.latest = snapshot;
+  $("#communication-mode").value = telemetry.communication_mode;
+  $("#water-condition").value = telemetry.water_condition;
+  $("#low-visibility").checked = snapshot.low_visibility;
   updateObstacleAlert(snapshot.obstacles || []);
   if (priorStatus === "Running" && telemetry.status === "Completed") {
     showToast("Inspection complete. Final report and analytics are ready.");
@@ -808,10 +1024,33 @@ function updateState(snapshot) {
   $("#wall-distance").textContent = `${telemetry.y.toFixed(1)} m`;
   $("#sonar-wall-range").textContent = `${telemetry.y.toFixed(1)} m`;
   $("#telemetry-speed").innerHTML = `${telemetry.speed.toFixed(2)} <small>m/s</small>`;
+  const imagingMode = telemetry.imaging_mode || "Camera-primary";
+  const imagingBadge = $("#imaging-mode-badge");
+  imagingBadge.textContent = imagingMode.toUpperCase();
+  imagingBadge.dataset.mode = imagingMode === "Sonar-primary" ? "sonar" : imagingMode === "Camera + sonar fusion" ? "fusion" : "camera";
+  $("#telemetry-imaging-mode").textContent = telemetry.active_sensor.toUpperCase();
   $("#telemetry-camera").textContent = telemetry.camera.toUpperCase();
-  $("#telemetry-camera").classList.toggle("good-text", telemetry.camera === "Online");
+  $("#telemetry-camera").classList.toggle("good-text", telemetry.camera === "Clear");
   $("#telemetry-link").textContent = telemetry.communication.toUpperCase();
   $("#telemetry-link").classList.toggle("good-text", telemetry.communication === "Connected");
+  $("#link-mode-caption").textContent = telemetry.communication_mode === "Tethered"
+    ? "Tethered · high-rate data and video"
+    : "Acoustic · low-rate compressed preview";
+  $("#link-connection-indicator").classList.toggle("running", telemetry.communication === "Connected");
+  $("#link-connection-indicator").innerHTML = `<i></i> ${telemetry.communication.toUpperCase()}`;
+  $("#link-quality-value").textContent = `${telemetry.link_quality.toFixed(1)}%`;
+  $("#link-quality-bar").style.width = `${telemetry.link_quality}%`;
+  $("#link-quality-bar").classList.toggle("interrupted", telemetry.communication !== "Connected");
+  $("#link-latency").textContent = `${telemetry.link_latency_ms} ms`;
+  $("#link-bandwidth").textContent = telemetry.link_bandwidth_kbps >= 1000
+    ? `${(telemetry.link_bandwidth_kbps / 1000).toFixed(0)} Mbps`
+    : `${telemetry.link_bandwidth_kbps} kbps`;
+  $("#link-packets").textContent = String(telemetry.packets);
+  const latestLinkEvent = snapshot.communication_events.at(-1);
+  $("#link-event").textContent = telemetry.communication === "Interrupted"
+    ? latestLinkEvent?.event || `${telemetry.communication_mode} link interrupted · video buffering`
+    : latestLinkEvent?.event || `${telemetry.communication_mode} link active · telemetry acknowledged`;
+  $("#link-event").classList.toggle("interrupted", telemetry.communication !== "Connected");
   $("#telemetry-battery").textContent = `${telemetry.battery.toFixed(1)}%`;
   $("#telemetry-progress").textContent = `${Math.round(telemetry.progress)}%`;
   $("#overview-status").textContent = telemetry.status.toUpperCase();
@@ -852,9 +1091,21 @@ function updateState(snapshot) {
   $("#pause-mission").disabled = telemetry.status !== "Running";
   $("#resume-mission").disabled = telemetry.status !== "Paused";
   renderFindings(snapshot);
+  renderMissionPriorities(snapshot);
   renderReportDetails(snapshot);
   updateCharts(snapshot);
   updateScene(snapshot);
+}
+
+function renderMissionPriorities(snapshot) {
+  const priorities = snapshot.mission_priorities || [];
+  const markup = priorities.map((item, index) => {
+    const level = item.priority.toLowerCase();
+    return `<article class="priority-card ${level}"><span class="priority-rank">${String(index + 1).padStart(2, "0")}</span><div class="priority-copy"><b>${escapeHTML(item.section)}</b><small>${escapeHTML(item.reason)}</small></div><div class="priority-score"><b>${Number(item.risk_score)}<small>/100</small></b><span>${escapeHTML(item.priority)}</span></div><button class="priority-action" type="button" data-priority-section="${escapeHTML(item.section)}" aria-label="Select ${escapeHTML(item.section)} for the next mission">PLAN →</button></article>`;
+  }).join("");
+  const empty = '<p class="priority-empty">Risk-ranked sample sections will appear here.</p>';
+  $("#mission-priority-list").innerHTML = markup || empty;
+  $("#analytics-priority-list").innerHTML = markup || empty;
 }
 
 function renderFindings(snapshot) {
@@ -865,7 +1116,7 @@ function renderFindings(snapshot) {
     container.innerHTML = snapshot.defects.map((finding) => {
       const severity = finding.severity.toLowerCase();
       const location = finding.location.map((value) => Number(value).toFixed(1)).join(" / ");
-      return `<article class="finding-chip"><span class="finding-marker">⌖</span><span class="finding-copy"><b>${escapeHTML(finding.type)}</b><small>${escapeHTML(finding.id)} · XYZ ${escapeHTML(location)} m</small></span><span class="severity-badge ${severity}">${escapeHTML(finding.severity.toUpperCase())}</span></article>`;
+      return `<article class="finding-chip"><span class="finding-marker">⌖</span><span class="finding-copy"><b>${escapeHTML(finding.type)}</b><small>${escapeHTML(finding.id)} · XYZ ${escapeHTML(location)} m · RISK ${Number(finding.risk_score)}/100</small></span><span class="severity-badge ${severity}">${escapeHTML(finding.severity.toUpperCase())}</span></article>`;
     }).join("");
   }
 
@@ -874,9 +1125,9 @@ function renderFindings(snapshot) {
     table.innerHTML = '<div class="report-empty">No findings recorded yet. Start an inspection to scan the sample locations.</div>';
     return;
   }
-  table.innerHTML = `<div class="table-wrap"><table class="data-table"><thead><tr><th>ID</th><th>FINDING</th><th>LOCATION · X / Y / Z</th><th>SEVERITY</th><th>CONFIDENCE</th></tr></thead><tbody>${snapshot.defects.map((finding) => {
+  table.innerHTML = `<div class="table-wrap"><table class="data-table"><thead><tr><th>ID</th><th>FINDING</th><th>LOCATION · X / Y / Z</th><th>SEVERITY</th><th>RISK INDEX</th><th>DETECTION SOURCE</th></tr></thead><tbody>${snapshot.defects.map((finding) => {
     const coords = finding.location.map((value) => Number(value).toFixed(1)).join(" / ");
-    return `<tr><td>${escapeHTML(finding.id)}</td><td>${escapeHTML(finding.type)}</td><td>${escapeHTML(coords)} m</td><td><span class="severity-badge ${finding.severity.toLowerCase()}">${escapeHTML(finding.severity)}</span></td><td>— <span class="muted-cell">simulated</span></td></tr>`;
+    return `<tr><td>${escapeHTML(finding.id)}</td><td>${escapeHTML(finding.type)}</td><td>${escapeHTML(coords)} m</td><td><span class="severity-badge ${finding.severity.toLowerCase()}">${escapeHTML(finding.severity)}</span></td><td>${Number(finding.risk_score)}/100</td><td>${escapeHTML(finding.detection_method || "Simulated")}</td></tr>`;
   }).join("")}</tbody></table></div>`;
 }
 
@@ -890,6 +1141,8 @@ function renderReportDetails(snapshot) {
     ["Distance traveled", `${Number(telemetry.distance_traveled || 0).toFixed(1)} m`],
     ["Planned route", `${Number(telemetry.planned_distance || 0).toFixed(1)} m`],
     ["Communication", `${telemetry.communication_mode} · ${telemetry.communication}`],
+    ["Adaptive imaging mode", telemetry.imaging_mode],
+    ["Follow-up priority", snapshot.mission_priorities?.[0]?.section || "Not available"],
     ["Data packets", String(telemetry.packets)],
     ["Data source", "Offline simulation"],
   ];
@@ -897,22 +1150,23 @@ function renderReportDetails(snapshot) {
 }
 
 function chartOptions(showLegend = false) {
+  const light = state.theme === "light";
   return {
     responsive: true,
     maintainAspectRatio: false,
     animation: { duration: 250 },
     plugins: {
-      legend: { display: showLegend, labels: { color: "#9db0b2", usePointStyle: true, boxWidth: 7, boxHeight: 7, padding: 14, font: { family: "DM Sans", size: 9 } } },
+      legend: { display: showLegend, labels: { color: light ? "#4c656b" : "#9db0b2", usePointStyle: true, boxWidth: 7, boxHeight: 7, padding: 14, font: { family: "DM Sans", size: 9 } } },
       tooltip: {
-        backgroundColor: "#10232b", titleColor: "#e4f0ed", bodyColor: "#9eb3b1",
-        borderColor: "#29434b", borderWidth: 1, padding: 9, displayColors: true,
+        backgroundColor: light ? "#ffffff" : "#10232b", titleColor: light ? "#18323a" : "#e4f0ed", bodyColor: light ? "#4c656b" : "#9eb3b1",
+        borderColor: light ? "#c8d8dc" : "#29434b", borderWidth: 1, padding: 9, displayColors: true,
       },
     },
   };
 }
 
 function createCharts() {
-  Chart.defaults.color = "#82999b";
+  Chart.defaults.color = state.theme === "light" ? "#526970" : "#82999b";
   Chart.defaults.font.family = "DM Sans";
   Chart.defaults.font.size = 9;
   const progress = $("#progress-chart");
@@ -929,7 +1183,7 @@ function createCharts() {
       ...chartOptions(true),
       scales: {
         x: { grid: { display: false }, ticks: { maxTicksLimit: 7 } },
-        y: { min: 0, max: 100, grid: { color: COLORS.grid }, ticks: { stepSize: 25, callback: (value) => `${value}%` } },
+        y: { min: 0, max: 100, grid: { color: state.theme === "light" ? "rgba(45, 80, 88, .12)" : COLORS.grid }, ticks: { stepSize: 25, callback: (value) => `${value}%` } },
       },
     },
   });
@@ -938,7 +1192,7 @@ function createCharts() {
     type: "doughnut",
     data: {
       labels: ["High", "Medium", "Low", "Not yet found"],
-      datasets: [{ data: [0, 0, 0, 4], backgroundColor: [COLORS.coral, COLORS.amber, COLORS.green, "#253941"], borderColor: "#0b1c25", borderWidth: 3, hoverOffset: 3 }],
+      datasets: [{ data: [0, 0, 0, 4], backgroundColor: [COLORS.coral, COLORS.amber, COLORS.green, "#253941"], borderColor: state.theme === "light" ? "#ffffff" : "#0b1c25", borderWidth: 3, hoverOffset: 3 }],
     },
     options: { ...chartOptions(false), cutout: "77%", plugins: { ...chartOptions(false).plugins, tooltip: chartOptions().plugins.tooltip } },
   });
@@ -1031,6 +1285,38 @@ function setView(viewName) {
   }
 }
 
+function applyTheme(theme) {
+  state.theme = theme;
+  document.body.classList.toggle("theme-light", theme === "light");
+  const nextTheme = theme === "light" ? "dark" : "light";
+  $("#theme-label").textContent = nextTheme.toUpperCase();
+  $("#theme-icon").textContent = nextTheme === "light" ? "☼" : "◐";
+  $("#theme-toggle").setAttribute("aria-label", `Switch to ${nextTheme} mode`);
+  $("#theme-toggle").title = `Switch to ${nextTheme} mode`;
+  Chart.defaults.color = theme === "light" ? "#526970" : "#82999b";
+  const gridColor = theme === "light" ? "rgba(45, 80, 88, .12)" : COLORS.grid;
+  Object.values(state.charts).forEach((chart) => {
+    chart.options.plugins.legend.labels.color = theme === "light" ? "#4c656b" : "#9db0b2";
+    chart.options.plugins.tooltip.backgroundColor = theme === "light" ? "#ffffff" : "#10232b";
+    chart.options.plugins.tooltip.titleColor = theme === "light" ? "#18323a" : "#e4f0ed";
+    chart.options.plugins.tooltip.bodyColor = theme === "light" ? "#4c656b" : "#9eb3b1";
+    chart.options.plugins.tooltip.borderColor = theme === "light" ? "#c8d8dc" : "#29434b";
+    for (const axis of Object.values(chart.options.scales || {})) {
+      if (axis.ticks) axis.ticks.color = theme === "light" ? "#526970" : "#82999b";
+      if (axis.title) axis.title.color = theme === "light" ? "#526970" : "#7d9497";
+      if (axis.grid) axis.grid.color = gridColor;
+    }
+    chart.update("none");
+  });
+}
+
+$("#theme-toggle").addEventListener("click", () => {
+  const nextTheme = state.theme === "dark" ? "light" : "dark";
+  localStorage.setItem("aquainspect-theme", nextTheme);
+  applyTheme(nextTheme);
+});
+applyTheme(state.theme);
+
 $$("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 $$("[data-view-link]").forEach((button) => button.addEventListener("click", (event) => {
   event.preventDefault();
@@ -1068,6 +1354,7 @@ $("#return-surface").addEventListener("click", () => performControl("surface", "
 $("#reset-mission").addEventListener("click", () => {
   state.missionSeconds = 0;
   $("#low-visibility").checked = false;
+  $("#water-condition").value = "Clear";
   $("#communication-mode").value = "Tethered";
   $("#depth-control").disabled = false;
   $("#mission-section").disabled = false;
@@ -1080,20 +1367,59 @@ $("#depth-control").addEventListener("input", (event) => {
   $("#breakdown-depth").textContent = `${event.target.value} m`;
 });
 
-async function saveSettings() {
+async function saveSettings(event) {
   try {
     const snapshot = await postJSON("/api/settings", {
       communication_mode: $("#communication-mode").value,
       low_visibility: $("#low-visibility").checked,
+      water_condition: $("#water-condition").value,
     });
     updateState(snapshot);
-    if ($("#low-visibility").checked) showToast("Low visibility enabled · camera degraded, sonar remains available.");
+    if (event?.target?.id === "communication-mode") {
+      showToast(`${snapshot.telemetry.communication_mode} link selected · rates and interruptions are simulated.`);
+    } else {
+      showToast(`${snapshot.telemetry.water_condition} water · camera visibility adapted; sonar remains available.`);
+    }
   } catch (error) {
     showToast(error.message);
   }
 }
 $("#communication-mode").addEventListener("change", saveSettings);
 $("#low-visibility").addEventListener("change", saveSettings);
+$("#water-condition").addEventListener("change", saveSettings);
+
+async function enhanceLiveVideoFrame() {
+  if (!$("#enhance-live-video").checked || state.videoEnhancementPending || !state.latest) return;
+  if (state.latest.telemetry.communication !== "Connected") return;
+  state.videoEnhancementPending = true;
+  try {
+    const canvas = $("#live-video-canvas");
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((result) => result ? resolve(result) : reject(new Error("Could not capture the simulated video frame.")), "image/jpeg", 0.82);
+    });
+    const form = new FormData();
+    form.append("file", blob, "simulated-rov-frame.jpg");
+    form.append("profile", $("#video-enhancement-profile").value);
+    const result = await request("/api/vision/enhance-frame", { method: "POST", body: form });
+    $("#live-video-enhanced").src = `data:image/jpeg;base64,${result.enhanced_image}`;
+    $("#live-video-enhanced").classList.remove("hidden");
+    state.videoEnhancementErrorShown = false;
+  } catch (error) {
+    $("#enhance-live-video").checked = false;
+    $("#live-video-enhanced").classList.add("hidden");
+    if (!state.videoEnhancementErrorShown) showToast(`Live-frame enhancement stopped: ${error.message}`);
+    state.videoEnhancementErrorShown = true;
+  } finally {
+    state.videoEnhancementPending = false;
+  }
+}
+
+$("#enhance-live-video").addEventListener("change", () => {
+  $("#live-video-enhanced").classList.toggle("hidden", !$("#enhance-live-video").checked);
+  if ($("#enhance-live-video").checked) enhanceLiveVideoFrame();
+});
+$("#video-enhancement-profile").addEventListener("change", enhanceLiveVideoFrame);
+window.setInterval(enhanceLiveVideoFrame, 1800);
 
 $$(".layer-button").forEach((button) => button.addEventListener("click", () => {
   const layer = button.dataset.layer;
@@ -1101,6 +1427,24 @@ $$(".layer-button").forEach((button) => button.addEventListener("click", () => {
   button.classList.toggle("selected", state.layerVisibility[layer]);
   if (state.latest) updateScene(state.latest);
 }));
+$$(".mission-priority-list").forEach((list) => list.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-priority-section]");
+  if (!button) return;
+  const section = button.dataset.prioritySection;
+  $("#mission-section").value = section;
+  const active = ["Running", "Paused", "Returning to surface"].includes(state.latest?.telemetry?.status);
+  if (active) {
+    showToast(`${section} selected for the next mission. The current route is unchanged.`);
+  } else {
+    setView("mission");
+    showToast(`${section} selected. Start inspection when ready.`);
+  }
+}));
+$("#risk-map-callout").addEventListener("click", (event) => {
+  if (!event.target.closest(".risk-callout-close")) return;
+  state.selectedRiskId = null;
+  $("#risk-map-callout").classList.add("hidden");
+});
 $("#camera-reset").addEventListener("click", () => {
   if (!sceneModel) return;
   sceneModel.camera.position.set(26, -3, 27);
@@ -1191,7 +1535,13 @@ async function analyzeImage(endpoint, options) {
 function renderImageResults(result) {
   $("#image-placeholder").classList.add("hidden");
   $("#image-result").classList.remove("hidden");
-  $("#image-stage-pill").textContent = "OPENCV ENHANCED";
+  const profileLabels = {
+    visibility: "VISIBILITY RECOVERY",
+    "low-light": "LOW-LIGHT BOOST",
+    "color-correct": "COLOR CORRECTED",
+  };
+  $("#image-stage-pill").textContent = profileLabels[result.profile] || "OPENCV ENHANCED";
+  $("#enhancement-caption").textContent = `${profileLabels[result.profile] || "OpenCV enhancement"} · local processing`;
   $("#enhanced-image").src = `data:image/jpeg;base64,${result.enhanced_image}`;
   $("#image-file-name").textContent = result.name;
   $("#candidate-boxes").replaceChildren();
@@ -1232,7 +1582,7 @@ $("#analyze-sample").addEventListener("click", async () => {
     await analyzeImage("/api/vision/sample", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ defect_type: $("#sample-defect").value }),
+      body: JSON.stringify({ defect_type: $("#sample-defect").value, profile: $("#enhancement-profile").value }),
     });
   } catch (error) {
     showToast(error.message);
@@ -1254,6 +1604,7 @@ $("#analyze-upload").addEventListener("click", async () => {
   try {
     const form = new FormData();
     form.append("file", state.file);
+    form.append("profile", $("#enhancement-profile").value);
     await analyzeImage("/api/vision/upload", { method: "POST", body: form });
   } catch (error) {
     showToast(error.message);

@@ -67,8 +67,64 @@ class NavigationTests(unittest.TestCase):
         simulation = Simulation()
         simulation.low_visibility = True
         simulation.step(0)
-        self.assertIn("Degraded", simulation.telemetry["camera"])
+        self.assertEqual(simulation.telemetry["camera"], "Very low visibility")
         self.assertEqual(simulation.telemetry["sonar"], "Scanning")
+
+    def test_muddy_water_reduces_camera_visibility_without_affecting_sonar(self):
+        simulation = Simulation()
+        simulation.set_water_condition("Silt")
+        self.assertEqual(simulation.telemetry["camera"], "Reduced visibility")
+        self.assertGreater(simulation.telemetry["visibility_obscuration"], 0.3)
+        simulation.set_water_condition("Heavy mud")
+        self.assertEqual(simulation.telemetry["camera"], "Very low visibility")
+        self.assertGreater(simulation.telemetry["visibility_obscuration"], 0.7)
+        self.assertEqual(simulation.telemetry["sonar"], "Scanning")
+        with self.assertRaisesRegex(ValueError, "Water condition"):
+            simulation.set_water_condition("Unknown")
+
+    def test_adaptive_imaging_switches_with_visibility_and_keeps_sonar_available(self):
+        simulation = Simulation()
+        self.assertEqual(simulation.telemetry["imaging_mode"], "Camera-primary")
+        simulation.set_water_condition("Silt")
+        self.assertEqual(simulation.telemetry["imaging_mode"], "Camera + sonar fusion")
+        simulation.set_water_condition("Heavy mud")
+        self.assertEqual(simulation.telemetry["imaging_mode"], "Sonar-primary")
+        simulation.set_water_condition("Clear")
+        simulation.low_visibility = True
+        self.assertEqual(simulation.telemetry["imaging_mode"], "Sonar-primary")
+        self.assertEqual(simulation.telemetry["sonar"], "Scanning")
+
+    def test_sonar_primary_inspection_records_method_and_risk_for_sample_finding(self):
+        simulation = Simulation()
+        simulation.set_water_condition("Heavy mud")
+        simulation.position = np.array([-9.0, 3.8, 12.0])
+        simulation._scan_for_defects()
+        self.assertEqual(len(simulation.detected_defects), 1)
+        finding = simulation.detected_defects[0]
+        self.assertEqual(finding["id"], "SIM-CR-01")
+        self.assertEqual(finding["risk_score"], 82)
+        self.assertEqual(finding["detection_method"], "Simulated sonar anomaly classification")
+
+    def test_risk_priorities_are_weighted_and_rise_for_recorded_scenarios(self):
+        simulation = Simulation()
+        initial = simulation.prioritized_missions()
+        self.assertEqual([item["section"] for item in initial], ["Right Section", "Left Section", "Center Section"])
+        self.assertEqual([item["risk_score"] for item in initial], [86, 82, 54])
+        simulation.detected_defects.append({"id": "SIM-CR-01"})
+        updated = simulation.prioritized_missions()
+        self.assertEqual(updated[0]["section"], "Left Section")
+        self.assertEqual(updated[0]["risk_score"], 87)
+        self.assertIn("simulated finding", updated[0]["reason"])
+
+    def test_tethered_link_remains_connected_with_high_simulated_capacity(self):
+        simulation = Simulation()
+        simulation.start_mission(["Left Section"])
+        for _ in range(50):
+            simulation.step(1)
+        self.assertTrue(simulation.communication_connected)
+        self.assertEqual(simulation.telemetry["link_quality"], 99.9)
+        self.assertEqual(simulation.telemetry["link_bandwidth_kbps"], 8000)
+        self.assertEqual(simulation.telemetry["video_fps"], 24)
 
     def test_acoustic_link_interrupts_and_recovers(self):
         simulation = Simulation()
@@ -146,12 +202,26 @@ class VisualizationAndReportTests(unittest.TestCase):
         image = generate_sample_image("Crack")
         enhanced = enhance_image(image)
         self.assertEqual(enhanced.shape, image.shape)
+        enhanced_profiles = []
+        for profile in ("visibility", "low-light", "color-correct"):
+            with self.subTest(profile=profile):
+                result = enhance_image(image, profile)
+                self.assertEqual(result.shape, image.shape)
+                self.assertEqual(result.dtype, image.dtype)
+                self.assertFalse(np.array_equal(result, image))
+                enhanced_profiles.append(result)
+        self.assertFalse(np.array_equal(enhanced_profiles[0], enhanced_profiles[1]))
+        self.assertFalse(np.array_equal(enhanced_profiles[0], enhanced_profiles[2]))
+        with self.assertRaisesRegex(ValueError, "Unknown enhancement profile"):
+            enhance_image(image, "unsupported")
         self.assertIsInstance(find_image_candidates(image), list)
 
         simulation = Simulation()
         csv_report = report_csv_bytes(simulation)
         pdf_report = report_pdf_bytes(simulation)
         self.assertIn(b"AQUAINSPECT 3D", csv_report)
+        self.assertIn(b"Adaptive imaging mode,Camera-primary", csv_report)
+        self.assertIn(b"Follow-up mission priority", csv_report)
         self.assertTrue(pdf_report.startswith(b"%PDF"))
 
 
