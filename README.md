@@ -22,7 +22,10 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Stop the server with **Ctrl
 ## Dashboard
 
 - **Live mission:** full-width WebGL2 scene, camera orbit/pan/zoom, assembled ROV components, animated sonar sweep, obstacles, findings, route history, and live telemetry.
+- **Manual ROV controls:** use the directional pad or arrow keys to move horizontally and change depth; use Toward/Away or W/S to adjust wall distance. Moves are interpolated and obstacle-aware.
+- **Sonar alerts:** new simulated obstacles trigger a blinking red alert and an optional browser-generated sound, which can be muted.
 - **Mission controls:** pick a dam section and inspection depth; start, pause, resume, return to surface, or reset. A* routes around simulated obstacles.
+- **Dam geometry:** a curved, textured concrete face with buttresses, structural relief, intake grilles, terrain, and inspection details.
 - **Data analytics:** coverage and battery timelines, finding-severity summaries, and coordinates plotted along the dam face.
 - **Final report:** completed mission summary, telemetry, recorded findings, locally bundled real-world dam reference photographs, and CSV/PDF downloads. Reference photographs are not scan footage.
 - **Image inspection:** generate a demonstration scenario or upload a PNG/JPEG for OpenCV enhancement and heuristic candidate regions.
