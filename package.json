@@ -1,0 +1,16 @@
+{
+  "name": "aquainspect3d-dashboard",
+  "version": "2.0.0",
+  "private": true,
+  "description": "GPU-rendered Three.js dam inspection dashboard",
+  "scripts": {
+    "build": "esbuild web/src/main.js --bundle --minify --format=iife --outfile=static/assets/app.js"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.9",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

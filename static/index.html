@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#07151c">
+    <meta name="description" content="AQUAINSPECT 3D underwater dam inspection simulation and analytics dashboard">
+    <title>AQUAINSPECT 3D · Dam intelligence</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script defer src="/static/assets/app.js"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" data-view-link="mission" aria-label="AQUAINSPECT 3D home">
+          <span class="brand-mark">
+            <svg viewBox="0 0 42 42" role="img" aria-label="">
+              <path d="M5 24c5-9 10-9 16 0s11 9 16 0M5 32c5-9 10-9 16 0s11 9 16 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              <path d="M21 5v15m-5-5 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="brand-copy"><b>AQUAINSPECT</b><small>UNDERWATER INTELLIGENCE</small></span>
+        </a>
+
+        <div class="side-label">WORKSPACE</div>
+        <nav class="primary-nav" aria-label="Main navigation">
+          <button class="nav-item active" data-view="mission"><span class="nav-icon">◈</span> Live mission <span class="nav-live"></span></button>
+          <button class="nav-item" data-view="overview"><span class="nav-icon">⌂</span> Overview</button>
+          <button class="nav-item" data-view="analytics"><span class="nav-icon">▥</span> Data analytics</button>
+          <button class="nav-item" data-view="report"><span class="nav-icon">▤</span> Final report</button>
+          <button class="nav-item" data-view="imagelab"><span class="nav-icon">◫</span> Image inspection</button>
+        </nav>
+
+        <div class="side-divider"></div>
+        <div class="side-label">MISSION SETUP</div>
+        <label class="field-label" for="mission-section">Inspection area</label>
+        <select id="mission-section" class="field-control">
+          <option value="Full Dam Survey">Full dam survey</option>
+          <option value="Left Section">Left section</option>
+          <option value="Center Section">Center section</option>
+          <option value="Right Section">Right section</option>
+        </select>
+
+        <div class="range-label"><label class="field-label" for="depth-control">Target depth</label><span id="depth-value">12 m</span></div>
+        <input id="depth-control" type="range" min="1" max="23" value="12" class="range-control">
+        <div class="range-ends"><span>1 m</span><span>23 m</span></div>
+
+        <label class="field-label" for="communication-mode">Communication link</label>
+        <select id="communication-mode" class="field-control">
+          <option value="Tethered">Tethered simulation</option>
+          <option value="Acoustic">Acoustic simulation</option>
+        </select>
+        <label class="switch-row">
+          <span><b>Low visibility</b><small>Degraded camera / clear sonar</small></span>
+          <input id="low-visibility" type="checkbox" role="switch">
+          <i class="switch"></i>
+        </label>
+
+        <div class="control-stack">
+          <button id="start-mission" class="button button-primary"><span>▶</span> Start inspection</button>
+          <div class="control-pair">
+            <button id="pause-mission" class="button button-secondary">Ⅱ &nbsp; Pause</button>
+            <button id="resume-mission" class="button button-secondary">▷ &nbsp; Resume</button>
+          </div>
+          <div class="control-pair">
+            <button id="return-surface" class="button button-secondary">↑ &nbsp; Return to surface</button>
+            <button id="reset-mission" class="button button-quiet" aria-label="Reset mission">↻</button>
+          </div>
+        </div>
+
+        <div class="sidebar-bottom">
+          <span class="connection-dot"></span>
+          <span>LOCAL SIMULATION</span>
+          <span class="sidebar-version">v2.0</span>
+        </div>
+      </aside>
+
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="breadcrumbs"><span>OPERATIONS</span><span class="crumb-separator">/</span><b id="page-title">LIVE MISSION</b></div>
+          <div class="topbar-right">
+            <span class="simulation-chip"><i></i> SIMULATION MODE</span>
+            <span class="topbar-date" id="local-clock">LOCAL · --:--:--</span>
+            <span class="avatar">AI</span>
+          </div>
+        </header>
+
+        <main class="content">
+          <div class="simulation-notice"><span>i</span> SIMULATED VEHICLE, SONAR AND FINDINGS · NOT LIVE FIELD DATA</div>
+
+          <section class="view active" id="view-mission" data-page-title="LIVE MISSION">
+            <div class="page-heading heading-row">
+              <div><p class="eyebrow">DAM INTEGRITY · DIGITAL TWIN</p><h1>Live inspection</h1><p class="page-subtitle">A 3D view of the inspection mission, route and underwater vehicle.</p></div>
+              <div class="mission-state"><span class="state-light"></span><span id="mission-state">IDLE</span><span class="state-separator">·</span><span id="mission-clock">00:00</span></div>
+            </div>
+
+            <div class="metric-row">
+              <article class="metric-card"><div class="metric-top"><span>MISSION COVERAGE</span><span class="metric-glyph">◉</span></div><div class="metric-value"><strong id="metric-progress">0%</strong><span id="metric-progress-note">Awaiting launch</span></div><div class="progress-track"><span id="progress-bar"></span></div></article>
+              <article class="metric-card"><div class="metric-top"><span>DEFECTS FOUND</span><span class="metric-glyph orange">⌁</span></div><div class="metric-value"><strong id="metric-defects">0</strong><span>simulated findings</span></div><div class="metric-bottom"><span class="legend-dot dot-coral"></span> Structural indicators</div></article>
+              <article class="metric-card"><div class="metric-top"><span>ROV BATTERY</span><span class="metric-glyph green">ϟ</span></div><div class="metric-value"><strong id="metric-battery">100%</strong><span>estimated charge</span></div><div class="mini-progress"><span id="battery-bar"></span></div></article>
+              <article class="metric-card"><div class="metric-top"><span>ROBOT DEPTH</span><span class="metric-glyph blue">⌖</span></div><div class="metric-value"><strong id="metric-depth">3.0<span class="unit"> m</span></strong><span id="metric-depth-target">Target · 12 m</span></div><div class="metric-bottom"><span class="legend-dot dot-cyan"></span> Pressure sensor · simulated</div></article>
+            </div>
+
+            <div class="mission-workspace">
+              <section class="panel scene-panel">
+                <div class="panel-heading scene-heading">
+                  <div><div class="panel-title">UNDERWATER DIGITAL TWIN <span class="live-pill"><i></i> LIVE</span></div><div class="panel-caption">Procedural environment · orbit, pan and zoom</div></div>
+                  <div class="scene-tools">
+                    <button class="layer-button selected" data-layer="route" title="Toggle route">ROUTE</button>
+                    <button class="layer-button selected" data-layer="sonar" title="Toggle sonar">SONAR</button>
+                    <button class="layer-button selected" data-layer="defects" title="Toggle defects">FINDINGS</button>
+                    <button id="camera-focus" class="layer-button" title="Zoom to the robot">FOCUS ROV</button>
+                    <button id="zoom-in" class="icon-button" title="Zoom in" aria-label="Zoom in">+</button>
+                    <button id="zoom-out" class="icon-button" title="Zoom out" aria-label="Zoom out">−</button>
+                    <button id="camera-reset" class="icon-button" title="Reset 3D camera">⟲</button>
+                  </div>
+                </div>
+                <div class="scene-wrap">
+                  <div id="three-canvas" class="three-canvas" aria-label="Interactive GPU-rendered Three.js dam and underwater vehicle scene"></div>
+                  <div class="scene-overlay scene-overlay-top"><span class="coord-pin"></span><span id="scene-coordinates">X −14.0 · Y 4.0 · Z 3.0 m</span></div>
+                  <div class="scene-overlay scene-overlay-bottom"><span>WALL DISTANCE <b id="wall-distance">4.0 m</b></span><span class="overlay-divider"></span><span>OBSTACLES IN RANGE <b id="obstacle-count">0</b></span><span class="overlay-divider"></span><span>RENDER <b id="render-mode">WEBGL2</b></span></div>
+                  <div id="webgl-warning" class="webgl-warning hidden">WebGL2 is unavailable in this browser. Enable hardware acceleration or update your graphics driver.</div>
+                </div>
+                <div class="scene-legend">
+                  <span><i class="legend-line line-route"></i> Planned route</span><span><i class="legend-line line-travel"></i> Traveled path</span><span><i class="legend-shape shape-defect"></i> Simulated finding</span><span><i class="legend-shape shape-obstacle"></i> Sonar return</span>
+                  <span class="legend-spacer"></span><span class="scene-axis">X HORIZONTAL <b>·</b> Y WALL RANGE <b>·</b> Z DEPTH</span>
+                </div>
+              </section>
+
+              <aside class="telemetry-column">
+                <section class="panel vehicle-panel">
+                  <div class="panel-heading"><div><div class="panel-title">ROV TELEMETRY</div><div class="panel-caption">AQUAINSPECT · UNIT 01</div></div><span class="system-status" id="thruster-status"><i></i> IDLE</span></div>
+                  <div class="position-label">POSITION · XYZ (M)</div>
+                  <div class="position-values"><span id="position-x">−14.0</span><span id="position-y">4.0</span><span id="position-z">3.0</span></div>
+                  <div class="position-axis"><span>X</span><span>Y</span><span>Z</span></div>
+                  <div class="telemetry-divider"></div>
+                  <div class="telemetry-row"><span><i class="sensor-icon icon-speed">↗</i> Vehicle speed</span><b id="telemetry-speed">0.00 <small>m/s</small></b></div>
+                  <div class="telemetry-row"><span><i class="sensor-icon icon-camera">◉</i> Camera</span><b id="telemetry-camera">ONLINE</b></div>
+                  <div class="telemetry-row"><span><i class="sensor-icon icon-sonar">◉</i> Sonar</span><b class="good-text">SCANNING</b></div>
+                  <div class="telemetry-row"><span><i class="sensor-icon icon-link">⌁</i> Data link</span><b id="telemetry-link">CONNECTED</b></div>
+                  <div class="telemetry-row"><span><i class="sensor-icon icon-battery">ϟ</i> Battery</span><b id="telemetry-battery">100%</b></div>
+                  <div class="coverage-block"><div><span>ROUTE PROGRESS</span><b id="telemetry-progress">0%</b></div><div class="progress-track"><span id="telemetry-progress-bar"></span></div></div>
+                </section>
+
+                <section class="panel sonar-panel">
+                  <div class="panel-heading"><div><div class="panel-title">SONAR RETURNS</div><div class="panel-caption">SYNTHETIC SCAN · 9 M RADIUS</div></div><div class="sonar-status-wrap"><button id="sound-toggle" class="sound-toggle" type="button" aria-pressed="true" title="Mute obstacle alert sound">♪ SOUND ON</button><span id="obstacle-alert" class="obstacle-alert" role="status" aria-live="polite"><i></i><b id="obstacle-alert-label">CLEAR</b></span></div></div>
+                  <div class="sonar-display" id="sonar-display">
+                    <svg viewBox="0 0 240 160" role="img" aria-label="Simulated sonar range return visualization">
+                      <defs><radialGradient id="sonar-glow"><stop offset="0" stop-color="#50f0d7" stop-opacity=".24"/><stop offset="1" stop-color="#50f0d7" stop-opacity="0"/></radialGradient><clipPath id="sonar-clip"><circle cx="120" cy="80" r="68"/></clipPath></defs>
+                      <circle cx="120" cy="80" r="68" fill="url(#sonar-glow)"/>
+                      <g class="sonar-rings" fill="none" stroke="#286271" stroke-width="1"><circle cx="120" cy="80" r="22"/><circle cx="120" cy="80" r="45"/><circle cx="120" cy="80" r="68"/><path d="M52 80h136M120 12v136M72 32l96 96M168 32 72 128"/></g>
+                      <path id="sonar-beam" d="M120 80 120 12 A68 68 0 0 1 152 20 Z" fill="#35e4cd" fill-opacity=".2" stroke="#35e4cd" stroke-opacity=".62" clip-path="url(#sonar-clip)"/>
+                      <g id="sonar-obstacles"></g><circle cx="120" cy="80" r="4" fill="#b9fff4"/><circle cx="120" cy="80" r="8" fill="none" stroke="#b9fff4" stroke-opacity=".55"/>
+                      <text x="120" y="9" text-anchor="middle" fill="#85aab4" font-size="7">WALL</text>
+                      <text x="120" y="158" text-anchor="middle" fill="#557984" font-size="7">SIMULATED RANGE · NOT MEASURED</text>
+                    </svg>
+                  </div>
+                  <div class="sonar-footer"><span id="sonar-detections">0 targets in range</span><span>WALL <b id="sonar-wall-range">4.0 m</b></span></div>
+                </section>
+
+                <section class="panel manual-panel">
+                  <div class="panel-heading"><div><div class="panel-title">MANUAL ROV CONTROL</div><div class="panel-caption">Collision-aware · interpolated 1 m moves</div></div><span class="manual-live"><i></i> LIVE</span></div>
+                  <div class="manual-control-layout">
+                    <div class="movement-pad" role="group" aria-label="Robot movement controls">
+                      <button class="move-button move-up" type="button" data-move="up" aria-label="Move up, decrease depth" title="Up · shallower">↑</button>
+                      <button class="move-button move-left" type="button" data-move="left" aria-label="Move left">←</button>
+                      <span class="movement-center" aria-hidden="true">ROV</span>
+                      <button class="move-button move-right" type="button" data-move="right" aria-label="Move right">→</button>
+                      <button class="move-button move-down" type="button" data-move="down" aria-label="Move down, increase depth" title="Down · deeper">↓</button>
+                    </div>
+                    <div class="wall-control">
+                      <span>Y · WALL RANGE</span>
+                      <button class="wall-move-button" type="button" data-move="toward" aria-label="Move toward wall">− Toward</button>
+                      <button class="wall-move-button" type="button" data-move="away" aria-label="Move away from wall">+ Away</button>
+                    </div>
+                  </div>
+                  <div class="manual-hint">ARROWS · W / S WALL RANGE</div>
+                </section>
+              </aside>
+            </div>
+
+            <section class="panel findings-panel">
+              <div class="panel-heading"><div><div class="panel-title">RECENT INSPECTION FINDINGS</div><div class="panel-caption">Scripted demonstration scenarios · detection is simulated</div></div><button class="text-button" data-view-link="analytics">View analytics <span>→</span></button></div>
+              <div id="finding-feed" class="finding-feed"><div class="empty-feed"><span>◈</span><div><b>Inspection findings appear here</b><small>Launch a mission to scan the dam wall.</small></div></div></div>
+            </section>
+
+            <div class="disclaimer-footer">AQUAINSPECT 3D · EDUCATIONAL SIMULATOR <span>All telemetry, findings, obstacle returns and communications are synthetic.</span></div>
+          </section>
+
+          <section class="view" id="view-overview" data-page-title="OVERVIEW">
+            <div class="reference-hero">
+              <div class="hero-image-credit">REFERENCE PHOTOGRAPH · NOT ROV CAMERA FOOTAGE</div>
+              <div class="hero-content"><p class="eyebrow">AQUAINSPECT 3D · MISSION CONTROL</p><h1>See beneath<br>the surface.</h1><p>Autonomous inspection simulation for hard-to-reach dam infrastructure.</p><button class="button button-primary" data-view-link="mission">Open live mission <span>→</span></button></div>
+              <div class="hero-location"><span>FIELD REFERENCE</span><b>Alum Creek Dam · Ohio, USA</b></div>
+            </div>
+            <div class="section-heading"><div><p class="eyebrow">AT A GLANCE</p><h2>Mission overview</h2></div><div class="updated-label"><span class="connection-dot"></span> LOCAL SIMULATION</div></div>
+            <div class="metric-row overview-metrics">
+              <article class="metric-card"><div class="metric-top"><span>MISSION STATUS</span><span class="metric-glyph">◈</span></div><div class="metric-value"><strong class="status-value" id="overview-status">IDLE</strong><span>Underwater survey</span></div></article>
+              <article class="metric-card"><div class="metric-top"><span>WALL COVERAGE</span><span class="metric-glyph">◉</span></div><div class="metric-value"><strong id="overview-progress">0%</strong><span>planned inspection area</span></div><div class="progress-track"><span id="overview-progress-bar"></span></div></article>
+              <article class="metric-card"><div class="metric-top"><span>FINDINGS</span><span class="metric-glyph orange">⌁</span></div><div class="metric-value"><strong id="overview-defects">0</strong><span>scripted scenarios found</span></div></article>
+              <article class="metric-card"><div class="metric-top"><span>PATH TRAVELED</span><span class="metric-glyph green">↗</span></div><div class="metric-value"><strong id="overview-distance">0.0<span class="unit"> m</span></strong><span>simulated distance</span></div></article>
+            </div>
+            <div class="section-heading"><div><p class="eyebrow">SYSTEM CAPABILITIES</p><h2>One clear view of the mission</h2></div></div>
+            <div class="capability-grid">
+              <article class="capability-card"><span class="capability-icon">◈</span><h3>Autonomous navigation</h3><p>3D waypoint planning with obstacle-aware A* routing and interpolated vehicle motion.</p><span class="capability-tag">A* ROUTE PLANNER</span></article>
+              <article class="capability-card"><span class="capability-icon icon-teal">⌁</span><h3>Sonar simulation</h3><p>Animated range sweep and synthetic obstacle returns, including in degraded visibility.</p><span class="capability-tag">SIMULATED SENSOR</span></article>
+              <article class="capability-card"><span class="capability-icon icon-coral">⌖</span><h3>Inspection findings</h3><p>Severity-ranked sample scenarios with wall coordinates and inspectable history.</p><span class="capability-tag">DEMO SCENARIOS</span></article>
+              <article class="capability-card"><span class="capability-icon icon-blue">▤</span><h3>Readable reports</h3><p>Mission analytics, map context, and downloadable CSV and PDF summaries.</p><span class="capability-tag">CSV + PDF EXPORT</span></article>
+            </div>
+            <div class="disclaimer-footer">REAL REFERENCE PHOTOS ARE PROVIDED FOR VISUAL CONTEXT ONLY · NOT MISSION IMAGERY</div>
+          </section>
+
+          <section class="view" id="view-analytics" data-page-title="DATA ANALYTICS">
+            <div class="page-heading heading-row"><div><p class="eyebrow">MISSION INTELLIGENCE</p><h1>Data analytics</h1><p class="page-subtitle">A clear summary of simulated coverage, findings, and vehicle performance.</p></div><span class="simulation-chip"><i></i> SYNTHETIC DATA</span></div>
+            <div class="analytics-kpis">
+              <article class="analytics-kpi"><span>WALL COVERAGE</span><b id="analytics-coverage">0%</b><small id="analytics-coverage-label">Inspection not started</small><div class="progress-track"><span id="analytics-coverage-bar"></span></div></article>
+              <article class="analytics-kpi"><span>FINDINGS LOGGED</span><b id="analytics-findings">0</b><small>From predefined scenarios</small><div class="kpi-inline"><i class="dot-coral"></i> Potential defects</div></article>
+              <article class="analytics-kpi"><span>PATH DISTANCE</span><b id="analytics-distance">0.0 <small>m</small></b><small>Planned route <span id="analytics-planned">0.0 m</span></small><div class="kpi-inline"><i class="dot-cyan"></i> A* navigation</div></article>
+              <article class="analytics-kpi"><span>BATTERY REMAINING</span><b id="analytics-battery">100%</b><small>Estimated simulation charge</small><div class="mini-progress"><span id="analytics-battery-bar"></span></div></article>
+            </div>
+            <div class="analytics-grid">
+              <section class="panel chart-panel"><div class="panel-heading"><div><div class="panel-title">MISSION PROGRESS</div><div class="panel-caption">Coverage and battery · current mission</div></div><span class="chart-units">PERCENT</span></div><div class="chart-wrap"><canvas id="progress-chart" aria-label="Coverage and battery line chart"></canvas></div></section>
+              <section class="panel chart-panel"><div class="panel-heading"><div><div class="panel-title">FINDINGS BY SEVERITY</div><div class="panel-caption">Distribution of scripted inspection scenarios</div></div><span class="chart-units">COUNT</span></div><div class="chart-wrap doughnut-wrap"><canvas id="severity-chart" aria-label="Defects severity doughnut chart"></canvas><div class="doughnut-center"><b id="severity-total">0</b><span>FINDINGS</span></div></div><div id="severity-legend" class="severity-legend"></div></section>
+              <section class="panel chart-panel chart-wide"><div class="panel-heading"><div><div class="panel-title">FINDING LOCATIONS</div><div class="panel-caption">Inspection scenarios mapped along the concrete face</div></div><span class="chart-units">X · HORIZONTAL / Z · DEPTH</span></div><div class="chart-wrap location-chart-wrap"><canvas id="location-chart" aria-label="Defect locations by dam section chart"></canvas></div></section>
+              <section class="panel chart-panel"><div class="panel-heading"><div><div class="panel-title">MISSION BREAKDOWN</div><div class="panel-caption">Operational snapshot</div></div><span class="chart-units">LIVE</span></div><div class="breakdown-list"><div><span>Vehicle state</span><b id="breakdown-status">IDLE</b></div><div><span>Communication</span><b id="breakdown-link">CONNECTED</b></div><div><span>Target depth</span><b id="breakdown-depth">12 m</b></div><div><span>Sonar obstacles</span><b id="breakdown-obstacles">0</b></div><div><span>Sample scenarios available</span><b>04</b></div></div></section>
+            </div>
+            <div class="analytics-note"><span>i</span> These charts summarize an offline simulation. They are not engineering measurements or verified structural assessments.</div>
+          </section>
+
+          <section class="view" id="view-report" data-page-title="FINAL REPORT">
+            <div class="page-heading heading-row"><div><p class="eyebrow">MISSION DOCUMENTATION</p><h1>Inspection report</h1><p class="page-subtitle">A concise, exportable summary for review and handover.</p></div><span id="report-status-chip" class="report-status-chip">MISSION IDLE</span></div>
+            <div id="report-ready-banner" class="report-complete-banner hidden"><div class="complete-icon">✓</div><div><b>Inspection mission complete</b><span>The simulated vehicle finished its route and returned to the launch point.</span></div><span class="completion-badge">100% COMPLETE</span></div>
+            <div class="report-summary-grid">
+              <article class="report-summary-card"><span>INSPECTION COVERAGE</span><b id="report-coverage">0%</b><div class="progress-track"><span id="report-coverage-bar"></span></div><small>Planned inspection route</small></article>
+              <article class="report-summary-card"><span>DEFECT INDICATORS</span><b id="report-findings">0</b><small id="report-severity-summary">Scripted scenarios recorded</small></article>
+              <article class="report-summary-card"><span>OBSTACLES DETECTED</span><b id="report-obstacles">0</b><small>Currently in synthetic sonar range</small></article>
+              <article class="report-summary-card"><span>ROBOT BATTERY</span><b id="report-battery">100%</b><small id="report-location">At launch location</small></article>
+            </div>
+            <div class="report-grid">
+              <section class="panel report-findings-panel"><div class="panel-heading"><div><div class="panel-title">STRUCTURAL FINDINGS</div><div class="panel-caption">Coordinates reference the simulated dam wall</div></div><span id="report-finding-count" class="count-pill">0 RECORDS</span></div><div id="report-findings-table"></div></section>
+              <section class="panel report-telemetry-panel"><div class="panel-heading"><div><div class="panel-title">MISSION DETAILS</div><div class="panel-caption">Robot and route summary</div></div></div><div id="report-details" class="breakdown-list"></div></section>
+            </div>
+            <section class="panel reference-gallery"><div class="panel-heading"><div><div class="panel-title">DAM REFERENCE PHOTOGRAPHY</div><div class="panel-caption">Real-world site context · these are not captured by the simulated ROV</div></div><span class="reference-pill">VISUAL REFERENCE ONLY</span></div><div class="gallery-grid"><figure class="gallery-card"><img src="/static/images/alum-creek-dam.jpg" alt="Alum Creek Dam concrete spillway and Tainter gates"><figcaption><div><b>Alum Creek Dam spillway</b><span>Ohio, USA · concrete infrastructure reference</span></div><a href="https://commons.wikimedia.org/wiki/File:Alum_Creek_Dam_Spillway_1.jpg" target="_blank" rel="noopener noreferrer">Photo &amp; license ↗</a></figcaption></figure><figure class="gallery-card"><img src="/static/images/idukki-reservoir.jpg" alt="Idukki Dam reservoir panorama surrounded by hills"><figcaption><div><b>Idukki Dam reservoir</b><span>Kerala, India · reservoir context reference</span></div><a href="https://commons.wikimedia.org/wiki/File:Idukki_Dam_Reservoir_Hillview_Pano_Kerala_Mar22_R16_05581-Pano.jpg" target="_blank" rel="noopener noreferrer">Photo &amp; license ↗</a></figcaption></figure></div><div class="photo-attribution">Alum Creek Dam spillway: Sixflashphoto, CC BY-SA 4.0. Idukki Dam reservoir: Timothy A. Gonsalves (Tagooty), CC BY-SA 4.0. Credits and license links are included with each photograph.</div></section>
+            <div class="report-actions"><div><b>Ready to share?</b><span>Download a formatted PDF report or a data-friendly CSV.</span></div><div class="action-buttons"><a class="button button-secondary" href="/api/report.csv" download>↓ &nbsp; Download CSV</a><a class="button button-primary" href="/api/report.pdf" download>↓ &nbsp; Download PDF report</a></div></div>
+            <div class="disclaimer-footer">REPORT CONTENT IS SIMULATED · PHOTO REFERENCES ARE SEPARATE FROM ROBOT INSPECTION DATA</div>
+          </section>
+
+          <section class="view" id="view-imagelab" data-page-title="IMAGE INSPECTION">
+            <div class="page-heading"><p class="eyebrow">COMPUTER VISION WORKBENCH</p><h1>Image inspection</h1><p class="page-subtitle">Enhance a sample or upload an image and inspect OpenCV heuristic candidates.</p></div>
+            <div class="analytics-note"><span>i</span> The built-in analyzer uses image-processing heuristics, not a trained AI model. Sample scenarios are generated—not field photography.</div>
+            <div class="image-lab-grid">
+              <section class="panel image-input-panel"><div class="panel-heading"><div><div class="panel-title">INSPECTION IMAGE</div><div class="panel-caption">Choose a generated scenario or upload PNG/JPEG</div></div></div><label class="field-label" for="sample-defect">Sample scenario</label><select id="sample-defect" class="field-control"><option>Crack</option><option>Concrete erosion</option><option>Water leakage</option><option>Surface damage</option></select><div class="upload-or">OR UPLOAD YOUR OWN</div><label for="image-upload" class="upload-zone"><span class="upload-icon">↑</span><b>Choose an inspection image</b><span>PNG or JPEG · maximum 10 MB</span><input id="image-upload" type="file" accept="image/png,image/jpeg,image/bmp"></label><button id="analyze-sample" class="button button-primary full-button">Analyze sample image</button><button id="analyze-upload" class="button button-secondary full-button" disabled>Analyze uploaded image</button><p class="image-file-name" id="image-file-name">No file selected</p></section>
+              <section class="panel image-preview-panel"><div class="panel-heading"><div><div class="panel-title">ENHANCED IMAGE</div><div class="panel-caption">CLAHE contrast enhancement · OpenCV</div></div><span id="image-stage-pill" class="image-stage-pill">WAITING FOR IMAGE</span></div><div id="image-placeholder" class="image-placeholder"><span>◫</span><b>Your enhanced image appears here</b><small>Run an analysis to view the sample and candidate regions.</small></div><div id="image-result" class="image-result hidden"><img id="enhanced-image" alt="Enhanced inspection image"><div id="candidate-boxes" class="candidate-boxes"></div></div><div id="candidate-results" class="candidate-results"></div></section>
+            </div>
+            <div class="disclaimer-footer">CANDIDATE REGIONS ARE VISUAL HEURISTICS, NOT CONFIRMED DEFECTS OR MODEL CONFIDENCE SCORES.</div>
+          </section>
+        </main>
+      </div>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
